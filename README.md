@@ -1,7 +1,7 @@
 # YouTube Panel for VS Code 📺
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/alexey.youtube-panel.svg)](https://marketplace.visualstudio.com/items?itemName=alexey.youtube-panel)
+[![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/entro.youtube-panel.svg)](https://marketplace.visualstudio.com/items?itemName=entro.youtube-panel)
 
 Enhance your development workflow with the ability to watch YouTube directly within your editor. Whether it's a tutorial, some background music, or a live stream, **YouTube Panel** brings it all into your VS Code workspace.
 
