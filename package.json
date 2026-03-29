@@ -1,18 +1,24 @@
 {
   "name": "youtube-panel",
   "displayName": "YouTube Panel",
-  "description": "Watch YouTube in the VS Code panel.",
+  "description": "Seamlessly watch YouTube directly in VS Code – tutorials, music, and streams without context switching.",
   "version": "0.0.1",
-  "publisher": "alexey",
+  "publisher": "entro",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Productivity"
   ],
   "activationEvents": [
     "onView:youtube-panel.view"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/entropious/youtube_extension.git"
+  },
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
