@@ -1,0 +1,54 @@
+{
+  "name": "youtube-panel",
+  "displayName": "YouTube Panel",
+  "description": "Watch YouTube in the VS Code panel.",
+  "version": "0.0.1",
+  "publisher": "alexey",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:youtube-panel.view"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "youtube-panel-container",
+          "title": "YouTube",
+          "icon": "media/youtube.svg"
+        }
+      ]
+    },
+    "views": {
+      "youtube-panel-container": [
+        {
+          "type": "webview",
+          "id": "youtube-panel.view",
+          "name": "YouTube Video",
+          "visibility": "visible"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "echo \"No automated extension tests configured\""
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.11.19",
+    "typescript": "^5.3.3",
+    "eslint": "^8.34.0",
+    "@typescript-eslint/eslint-plugin": "^5.52.0",
+    "@typescript-eslint/parser": "^5.52.0"
+  }
+}
