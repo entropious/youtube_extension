@@ -22,10 +22,18 @@ function getProxyEmbedHtml(videoId: string): string {
 </head>
 <body>
 	<iframe id="player"
-		src="https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1"
+		src="https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1"
 		allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
 		allowfullscreen>
 	</iframe>
+	<script>
+		window.addEventListener('message', (event) => {
+			const player = document.getElementById('player');
+			if (player && player.contentWindow) {
+				player.contentWindow.postMessage(event.data, '*');
+			}
+		});
+	</script>
 </body>
 </html>`;
 }
@@ -101,6 +109,12 @@ export async function activate(context: vscode.ExtensionContext) {
 			}
 		})
 	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('youtube-panel.togglePlay', () => {
+			provider.togglePlay();
+		})
+	);
 }
 
 class YouTubeViewProvider implements vscode.WebviewViewProvider {
@@ -164,6 +178,10 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	}
 
+	public togglePlay() {
+		this._view?.webview.postMessage({ type: 'togglePlay' });
+	}
+
 	public loadUrl(url: string) {
 		if (this._view) {
 			void this._saveUrl(url);
@@ -181,7 +199,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				return `http://127.0.0.1:${proxyPort}/embed?v=${id}`;
 			}
 
-			return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1&playsinline=1`;
+			return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1&autoplay=1`;
 		};
 
 		try {
@@ -298,7 +316,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						top: 0;
 						left: 0;
 						right: 0;
-						height: 34px;
+						height: 48px;
 						z-index: 999;
 					}
 
@@ -310,12 +328,13 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						display: flex;
 						align-items: center;
 						padding: 4px 8px;
-						background: rgba(30, 30, 30, 0.8);
-						backdrop-filter: blur(4px);
+						background: rgba(30,30,30,0.95);
+						backdrop-filter: blur(8px);
 						z-index: 1000;
-						transition: opacity 0.3s ease, transform 0.3s ease;
-						transform: translateY(-68%);
-						opacity: 0.5;
+						transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+						transform: translateY(-100%);
+						opacity: 0;
+                        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 					}
 
 					.top-hitbox:hover + .header,
@@ -368,7 +387,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
                     .history-dropdown {
                         display: none;
                         position: absolute;
-                        top: 35px;
+                        top: 100%;
                         left: 8px;
                         right: 8px;
                         background: var(--vscode-dropdown-background);
@@ -376,6 +395,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
                         max-height: 200px;
                         overflow-y: auto;
                         z-index: 2000;
+                        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
                     }
 
                     .history-item {
@@ -421,6 +441,15 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					const emptyState = document.getElementById('empty-state');
 
 					vscode.postMessage({ type: 'webviewReady' });
+
+					input.addEventListener('keydown', (e) => {
+						if (e.key === 'Enter') {
+							const url = input.value;
+							if (url) {
+								loadVideo(url);
+							}
+						}
+					});
 
 					loadBtn.addEventListener('click', () => {
 						const url = input.value;
@@ -469,9 +498,13 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 									iframe.src = message.value;
 									input.value = message.originalUrl || message.value;
 	                                emptyState.style.display = 'none';
+                                    isPaused = false;
 									break;
                             case 'history':
                                 showHistory(message.value);
+                                break;
+                            case 'togglePlay':
+                                togglePlay();
                                 break;
 						}
 					});
@@ -494,7 +527,9 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	                            const params = new URLSearchParams({
 	                                rel: '0',
 	                                modestbranding: '1',
-	                                playsinline: '1'
+	                                playsinline: '1',
+                                    enablejsapi: '1',
+                                    autoplay: '1'
 	                            });
 
 	                            return 'https://www.youtube.com/embed/' + id + '?' + params.toString();
@@ -556,6 +591,18 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	                            });
                         }
                         historyDropdown.classList.add('visible');
+                    }
+
+                    let isPaused = false;
+                    function togglePlay() {
+                        const command = isPaused ? 'playVideo' : 'pauseVideo';
+                        if (iframe && iframe.contentWindow) {
+                            iframe.contentWindow.postMessage(JSON.stringify({
+                                event: 'command',
+                                func: command
+                            }), '*');
+                            isPaused = !isPaused;
+                        }
                     }
 				</script>
 			</body>
