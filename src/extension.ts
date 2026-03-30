@@ -10,30 +10,37 @@ type HistoryEntry = {
 };
 
 function getProxyEmbedHtml(videoId: string): string {
-	return `<!DOCTYPE html>
-<html lang="en" style="height:100%;margin:0;padding:0;background:#000;">
+    return `<!DOCTYPE html>
+<html lang="en">
 <head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<style>
-		html, body { height:100%; margin:0; padding:0; background:#000; overflow:hidden; }
-		#player { width:100%; height:100%; border:0; }
-	</style>
+    <meta charset="UTF-8">
+    <style>body,html,#p{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;}</style>
 </head>
 <body>
-	<iframe id="player"
-		src="https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1"
-		allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-		allowfullscreen>
-	</iframe>
-	<script>
-		window.addEventListener('message', (event) => {
-			const player = document.getElementById('player');
-			if (player && player.contentWindow) {
-				player.contentWindow.postMessage(event.data, '*');
-			}
-		});
-	</script>
+    <div id="p"></div>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script>
+        let p;
+        let v = '${videoId}';
+        function onYouTubeIframeAPIReady() {
+            p = new YT.Player('p', {
+                height: '100%', width: '100%', videoId: v,
+                playerVars: { autoplay: 1, rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1 },
+                events: {
+                    onReady: e => { if(v) e.target.playVideo(); },
+                    onStateChange: e => { window.parent.postMessage({event:'infoDelivery',info:{playerState:e.data}}, '*'); }
+                }
+            });
+        }
+        window.addEventListener('message', e => {
+            if (e.data.type === 'load') {
+                v = e.data.id;
+                if (p && p.loadVideoById) p.loadVideoById(v);
+            } else if (e.data.event === 'command' && p && p[e.data.func]) {
+                p[e.data.func]();
+            }
+        });
+    </script>
 </body>
 </html>`;
 }
@@ -52,10 +59,8 @@ async function startProxyServer(): Promise<void> {
 		}
 
 		const videoId = url.searchParams.get('v') ?? '';
-		if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-			res.writeHead(400);
-			res.end('Invalid video id');
-			return;
+		if (videoId && !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+			res.writeHead(400); res.end('Invalid video id'); return;
 		}
 
 		res.writeHead(200, {
@@ -115,6 +120,12 @@ export async function activate(context: vscode.ExtensionContext) {
 			provider.togglePlay();
 		})
 	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('youtube-panel.nextVideo', () => {
+			provider.nextVideo();
+		})
+	);
 }
 
 class YouTubeViewProvider implements vscode.WebviewViewProvider {
@@ -129,62 +140,17 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		private readonly _state: vscode.Memento
 	) { }
 
-	public resolveWebviewView(
-		webviewView: vscode.WebviewView,
-		_context: vscode.WebviewViewResolveContext,
-		_token: vscode.CancellationToken,
-	) {
-		this._view = webviewView;
-
-		webviewView.webview.options = {
-			enableScripts: true,
-			localResourceRoots: [this._extensionUri]
-		};
-
-		webviewView.webview.html = this._getHtmlForWebview();
-
-		webviewView.webview.onDidReceiveMessage(data => {
-			switch (data.type) {
-				case 'webviewReady': {
-					const last = this._getHistory()[0];
-					if (last) {
-						this._view?.webview.postMessage({
-							type: 'loadUrl',
-							value: this._formatYoutubeUrl(last.url),
-							originalUrl: last.url
-						});
-					}
-					break;
-				}
-				case 'requestLoad':
-					void this._handleLoadRequest(data.value);
-					this._view?.webview.postMessage({
-						type: 'loadUrl',
-						value: this._formatYoutubeUrl(data.value),
-						originalUrl: data.value
-					});
-					break;
-				case 'urlSelected':
-					void this._saveUrl(data.value);
-					break;
-				case 'openExternal':
-					void vscode.env.openExternal(vscode.Uri.parse(data.value));
-					break;
-				case 'requestHistory':
-					this._view?.webview.postMessage({ type: 'history', value: this._getHistory() });
-					break;
-			}
-		});
-
-	}
-
 	public togglePlay() {
 		this._view?.webview.postMessage({ type: 'togglePlay' });
 	}
 
+	public nextVideo() {
+		this._view?.webview.postMessage({ type: 'nextVideo' });
+	}
+
 	public loadUrl(url: string) {
 		if (this._view) {
-			void this._saveUrl(url);
+			void this._handleLoadRequest(url);
 			this._view.webview.postMessage({
 				type: 'loadUrl',
 				value: this._formatYoutubeUrl(url),
@@ -234,16 +200,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		return url;
 	}
 
-	private async _saveUrl(url: string): Promise<void> {
-		await this._saveUrlWithTitle(url);
-	}
-
-	private async _handleLoadRequest(url: string): Promise<void> {
-		const title = await this._resolveTitle(url);
-		await this._saveUrlWithTitle(url, title);
-	}
-
-	private async _saveUrlWithTitle(url: string, title?: string): Promise<void> {
+	private async _saveUrl(url: string, title?: string): Promise<void> {
 		const normalized = url.trim();
 		if (!normalized) {
 			return;
@@ -251,9 +208,14 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 		const history = this._getHistory();
 		const deduped = history.filter(item => item.url !== normalized);
-		deduped.unshift({ url: normalized, title: title || deduped[0]?.title });
+		deduped.unshift({ url: normalized, title: title });
 
-		await this._state.update(YouTubeViewProvider.historyKey, deduped.slice(0, 10));
+		await this._state.update(YouTubeViewProvider.historyKey, deduped.slice(0, 50));
+	}
+
+	private async _handleLoadRequest(url: string): Promise<void> {
+		const title = await this._resolveTitle(url);
+		await this._saveUrl(url, title);
 	}
 
 	private _getHistory(): HistoryEntry[] {
@@ -291,6 +253,92 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
+	private async _fetchRelated(videoId: string): Promise<string[]> {
+		try {
+			const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+				headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
+			});
+			const text = await res.text();
+			const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g);
+			const ids = Array.from(matches).map(m => m[1]);
+			return [...new Set(ids)].filter(id => id !== videoId);
+		} catch {
+			return [];
+		}
+	}
+
+	private async _searchVideos(query: string): Promise<string[]> {
+		try {
+			const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`);
+			const text = await res.text();
+			const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g);
+			return [...new Set(Array.from(matches).map(m => m[1]))];
+		} catch {
+			return [];
+		}
+	}
+
+	private async _findNextVideo(currentId: string): Promise<string | undefined> {
+		const ids = await this._fetchRelated(currentId);
+		const filtered = ids.filter(id => id !== currentId);
+		return filtered[Math.floor(Math.random() * Math.min(filtered.length, 5))];
+	}
+
+	public resolveWebviewView(
+		webviewView: vscode.WebviewView,
+		_context: vscode.WebviewViewResolveContext,
+		_token: vscode.CancellationToken,
+	) {
+		this._view = webviewView;
+
+		webviewView.webview.options = {
+			enableScripts: true,
+			localResourceRoots: [this._extensionUri]
+		};
+
+		webviewView.webview.html = this._getHtmlForWebview();
+
+		webviewView.webview.onDidReceiveMessage(async data => {
+			switch (data.type) {
+				case 'webviewReady': {
+					const last = this._getHistory()[0];
+					if (last) {
+						this._view?.webview.postMessage({
+							type: 'loadUrl',
+							value: this._formatYoutubeUrl(last.url),
+							originalUrl: last.url
+						});
+					}
+					break;
+				}
+				case 'requestLoad':
+					void this._handleLoadRequest(data.value);
+					this._view?.webview.postMessage({
+						type: 'loadUrl',
+						value: this._formatYoutubeUrl(data.value),
+						originalUrl: data.value
+					});
+					break;
+				case 'urlSelected':
+					void this._saveUrl(data.value);
+					break;
+				case 'openExternal':
+					void vscode.env.openExternal(vscode.Uri.parse(data.value));
+					break;
+				case 'requestHistory':
+					this._view?.webview.postMessage({ type: 'history', value: this._getHistory() });
+					break;
+				case 'requestNextVideo':
+					const nextId = await this._findNextVideo(data.videoId);
+					if (nextId) {
+						const nextUrl = `https://www.youtube.com/watch?v=${nextId}`;
+						this.loadUrl(nextUrl);
+					}
+					break;
+			}
+		});
+	}
+
 	private _getHtmlForWebview() {
 		return `<!DOCTYPE html>
 			<html lang="en">
@@ -299,6 +347,13 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-src http://127.0.0.1:* https://www.youtube.com https://youtube.com;">
 				<style>
+					:root {
+						--accent-color: #ff0000;
+						--header-bg: rgba(25, 25, 25, 0.9);
+						--input-bg: rgba(45, 45, 45, 0.8);
+						--transition-speed: 0.3s;
+					}
+
 					body {
 						margin: 0;
 						padding: 0;
@@ -306,9 +361,9 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						height: 100vh;
 						display: flex;
 						flex-direction: column;
-						background-color: transparent;
+						background-color: #000;
 						overflow: hidden;
-						font-family: var(--vscode-font-family);
+						font-family: var(--vscode-font-family), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 					}
 
 					.top-hitbox {
@@ -316,7 +371,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						top: 0;
 						left: 0;
 						right: 0;
-						height: 48px;
+						height: 60px;
 						z-index: 999;
 					}
 
@@ -326,15 +381,16 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						left: 0;
 						right: 0;
 						display: flex;
-						align-items: center;
-						padding: 4px 8px;
-						background: rgba(30,30,30,0.95);
-						backdrop-filter: blur(8px);
+						flex-direction: column;
+						padding: 8px 12px;
+						background: var(--header-bg);
+						backdrop-filter: blur(12px);
+						border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 						z-index: 1000;
-						transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+						transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
 						transform: translateY(-100%);
 						opacity: 0;
-                        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+						box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
 					}
 
 					.top-hitbox:hover + .header,
@@ -343,39 +399,73 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						opacity: 1;
 					}
 
-					input {
+					.input-row {
+						display: flex;
+						align-items: center;
+						gap: 8px;
+						margin-bottom: 8px;
+					}
+
+					.settings-row {
+						display: flex;
+						align-items: center;
+						justify-content: space-between;
+						font-size: 11px;
+						color: rgba(255, 255, 255, 0.7);
+					}
+
+					.autoplay-group {
+						display: flex;
+						align-items: center;
+						gap: 8px;
+					}
+
+					input[type="text"] {
 						flex-grow: 1;
-						background: var(--vscode-input-background);
-						color: var(--vscode-input-foreground);
-						border: 1px solid var(--vscode-input-border);
-						padding: 4px 8px;
-						margin: 0 4px;
-                        outline: none;
+						background: var(--input-bg);
+						color: #fff;
+						border: 1px solid rgba(255, 255, 255, 0.1);
+						border-radius: 4px;
+						padding: 6px 10px;
+						outline: none;
+						transition: border-color 0.2s;
+					}
+
+					input[type="text"]:focus {
+						border-color: var(--accent-color);
 					}
 
 					button {
 						background: var(--vscode-button-background);
 						color: var(--vscode-button-foreground);
 						border: none;
-						padding: 4px 12px;
+						border-radius: 4px;
+						padding: 6px 12px;
+						font-weight: 500;
 						cursor: pointer;
+						transition: opacity 0.2s;
 					}
 
 					button:hover {
+						opacity: 0.9;
 						background: var(--vscode-button-hoverBackground);
 					}
 
 					#history-btn {
-                        background: transparent;
-                        color: var(--vscode-foreground);
-                        font-size: 16px;
-                        padding: 0 8px;
+						background: transparent;
+						font-size: 14px;
+						padding: 0 4px;
+                        color: #aaa;
+					}
+
+					#history-btn:hover {
+                        color: #fff;
                     }
 
 					.player-container {
 						flex-grow: 1;
 						position: relative;
-						background: black;
+						background: #000;
 					}
 
 					iframe {
@@ -384,49 +474,112 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						border: none;
 					}
 
-                    .history-dropdown {
-                        display: none;
-                        position: absolute;
-                        top: 100%;
-                        left: 8px;
-                        right: 8px;
-                        background: var(--vscode-dropdown-background);
-                        border: 1px solid var(--vscode-dropdown-border);
-                        max-height: 200px;
-                        overflow-y: auto;
-                        z-index: 2000;
-                        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-                    }
+					select {
+						background: var(--input-bg);
+						color: #fff;
+						border: 1px solid rgba(255, 255, 255, 0.1);
+						border-radius: 3px;
+						padding: 2px 4px;
+						font-size: 10px;
+						outline: none;
+					}
 
-                    .history-item {
-                        padding: 6px 10px;
-                        cursor: pointer;
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                        color: var(--vscode-dropdown-foreground);
-                    }
+					.checkbox-wrapper {
+						display: flex;
+						align-items: center;
+						gap: 4px;
+						cursor: pointer;
+					}
 
-                    .history-item:hover {
-                        background: var(--vscode-list-hoverBackground);
-                    }
+					.checkbox-wrapper input {
+						cursor: pointer;
+						accent-color: var(--accent-color);
+					}
 
-                    .visible {
-                        display: block;
-                    }
+					.history-dropdown {
+						display: none;
+						position: absolute;
+						top: 100%;
+						left: 8px;
+						right: 8px;
+						background: #1e1e1e;
+						border: 1px solid rgba(255, 255, 255, 0.1);
+						border-radius: 4px;
+						max-height: 300px;
+						overflow-y: auto;
+						z-index: 2000;
+						box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+					}
+
+					.history-item {
+						padding: 10px 14px;
+						cursor: pointer;
+						white-space: nowrap;
+						overflow: hidden;
+						text-overflow: ellipsis;
+						border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+						transition: background 0.2s;
+						font-size: 12px;
+					}
+
+					.history-item:hover {
+						background: rgba(255, 255, 255, 0.08);
+					}
+
+					.visible {
+						display: block;
+					}
+
+					#empty-state {
+						position: absolute;
+						inset: 0;
+						display: flex;
+						flex-direction: column;
+						align-items: center;
+						justify-content: center;
+						color: #777;
+						font-size: 14px;
+						z-index: 1;
+						pointer-events: none;
+						text-align: center;
+						padding: 40px;
+					}
+
+					#empty-state svg {
+						width: 48px;
+						height: 48px;
+						margin-bottom: 16px;
+						fill: #333;
+					}
 				</style>
 			</head>
 			<body>
 				<div class="top-hitbox"></div>
 				<div class="header">
-					<input type="text" id="url-input" placeholder="YouTube URL...">
-					<button id="load-btn">Go</button>
-					<button id="open-btn">Open</button>
-                    <button id="history-btn">▼</button>
-                    <div id="history-dropdown" class="history-dropdown"></div>
+					<div class="input-row">
+						<button id="history-btn" title="Recent History">🕒</button>
+						<input type="text" id="url-input" placeholder="Paste YouTube URL here...">
+						<button id="load-btn">Go</button>
+						<button id="next-btn" title="Next (Similar/Popular/Random)">⏭</button>
+						<button id="open-btn" title="Open in Browser">↗</button>
+					</div>
+					<div class="settings-row">
+						<div class="autoplay-group">
+							<label class="checkbox-wrapper">
+								<input type="checkbox" id="autoplay-check">
+								Continuous Play (Similar)
+							</label>
+						</div>
+						<div id="status-text">Ready</div>
+					</div>
+					<div id="history-dropdown" class="history-dropdown"></div>
 				</div>
 				<div class="player-container">
-					<div id="empty-state" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--vscode-descriptionForeground);font-size:13px;z-index:1;pointer-events:none; text-align:center; padding:0 16px;">Paste a YouTube URL and press Go.<br/>If YouTube shows error 153, use Open to play in browser.</div>
+					<div id="empty-state">
+						<svg viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg>
+						Paste a YouTube URL to start watching.<br/>
+						<span style="font-size:11px; margin-top:8px; opacity:0.6;">Tip: Use Continuous Play to keep the music going.</span>
+					</div>
 					<iframe id="video-frame" src="about:blank" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowfullscreen></iframe>
 				</div>
 
@@ -434,176 +587,201 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					const vscode = acquireVsCodeApi();
 					const input = document.getElementById('url-input');
 					const loadBtn = document.getElementById('load-btn');
+					const nextBtn = document.getElementById('next-btn');
 					const openBtn = document.getElementById('open-btn');
 					const historyBtn = document.getElementById('history-btn');
 					const historyDropdown = document.getElementById('history-dropdown');
 					const iframe = document.getElementById('video-frame');
 					const emptyState = document.getElementById('empty-state');
+					const autoplayCheck = document.getElementById('autoplay-check');
+					const statusText = document.getElementById('status-text');
+
+					let currentVideoId = '';
+					let isPaused = false;
+
+					// Load saved autoplay settings
+					const state = vscode.getState() || { autoplay: true };
+					autoplayCheck.checked = state.autoplay;
+
+					autoplayCheck.addEventListener('change', () => {
+						saveState();
+					});
+
+					function saveState() {
+						vscode.setState({ 
+							autoplay: autoplayCheck.checked
+						});
+					}
 
 					vscode.postMessage({ type: 'webviewReady' });
 
 					input.addEventListener('keydown', (e) => {
 						if (e.key === 'Enter') {
 							const url = input.value;
-							if (url) {
-								loadVideo(url);
-							}
+							if (url) { loadVideo(url); }
 						}
 					});
 
 					loadBtn.addEventListener('click', () => {
 						const url = input.value;
-						if (url) {
-							loadVideo(url);
-						}
+						if (url) { loadVideo(url); }
+					});
+
+					nextBtn.addEventListener('click', () => {
+						requestNext(true);
 					});
 
 					openBtn.addEventListener('click', () => {
 						const normalized = normalizeInput(input.value);
+						if (normalized) {
+							vscode.postMessage({ type: 'openExternal', value: normalized });
+						}
+					});
+
+					historyBtn.addEventListener('click', (e) => {
+						e.stopPropagation();
+						vscode.postMessage({ type: 'requestHistory' });
+					});
+
+					document.addEventListener('click', () => {
+						historyDropdown.classList.remove('visible');
+					});
+
+					function loadVideo(url) {
+						const normalized = normalizeInput(url);
 						if (!normalized) {
+							statusText.textContent = 'Invalid URL';
 							return;
 						}
 
-						vscode.postMessage({ type: 'openExternal', value: normalized });
-					});
+						currentVideoId = extractVideoId(normalized);
+						vscode.postMessage({ type: 'requestLoad', value: normalized });
+						emptyState.style.display = 'none';
+						historyDropdown.classList.remove('visible');
+						statusText.textContent = 'Loading...';
+					}
 
-                    historyBtn.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        vscode.postMessage({ type: 'requestHistory' });
-                    });
-
-                    document.addEventListener('click', () => {
-                        historyDropdown.classList.remove('visible');
-                    });
-
-					function loadVideo(url) {
-	                        const normalized = normalizeInput(url);
-	                        const formatted = toEmbedUrl(normalized);
-
-	                        if (!formatted) {
-	                            emptyState.textContent = 'Invalid YouTube URL';
-	                            emptyState.style.display = 'flex';
-	                            return;
-	                        }
-
-	                        vscode.postMessage({ type: 'requestLoad', value: normalized });
-	                        emptyState.style.display = 'none';
-	                        historyDropdown.classList.remove('visible');
+					function extractVideoId(url) {
+						if (!url) return '';
+						try {
+							const parsed = new URL(url);
+							const host = parsed.hostname.replace(/^www[.]/, '');
+							if (host === 'youtu.be') return parsed.pathname.split('/')[1];
+							if (host.includes('youtube.com')) {
+								if (parsed.pathname === '/watch') return parsed.searchParams.get('v');
+								if (parsed.pathname.startsWith('/shorts/')) return parsed.pathname.split('/')[2];
+								if (parsed.pathname.startsWith('/embed/')) return parsed.pathname.split('/')[2];
+							}
+							if (host.includes('127.0.0.1')) {
+								return parsed.searchParams.get('v') || '';
+							}
+						} catch(e) {}
+						
+						// Try to match a raw 11-char ID
+						const match = url.match(/[a-zA-Z0-9_-]{11}/);
+						return match ? match[0] : '';
 					}
 
 					window.addEventListener('message', event => {
 						const message = event.data;
-							switch (message.type) {
-								case 'loadUrl':
+						
+						// Handle YouTube IFrame API messages
+						if (typeof message === 'string') {
+							// Sometimes messages are JSON strings
+							if (message.includes('playerState')) {
+								try {
+									const data = JSON.parse(message);
+									if (data.event === 'infoDelivery' && data.info && data.info.playerState === 0) {
+										requestNext();
+									}
+								} catch(e) {}
+							}
+						} else if (message && message.event === 'infoDelivery' && message.info && message.info.playerState === 0) {
+							requestNext();
+						}
+
+						switch (message.type) {
+							case 'loadUrl':
+								const nextId = extractVideoId(message.value);
+								const proxyUrlPrefix = message.value.split('/embed')[0] + '/embed';
+								
+								if (iframe.src.startsWith(proxyUrlPrefix)) {
+									// If already on proxy, just load video without reload
+									iframe.contentWindow.postMessage({ type: 'load', id: nextId }, '*');
+								} else {
 									iframe.src = message.value;
-									input.value = message.originalUrl || message.value;
-	                                emptyState.style.display = 'none';
-                                    isPaused = false;
-									break;
-                            case 'history':
-                                showHistory(message.value);
-                                break;
-                            case 'togglePlay':
-                                togglePlay();
-                                break;
+								}
+								
+								input.value = message.originalUrl || message.value;
+								currentVideoId = nextId;
+								emptyState.style.display = 'none';
+								isPaused = false;
+								statusText.textContent = 'Playing';
+								break;
+							case 'history':
+								showHistory(message.value);
+								break;
+							case 'togglePlay':
+								togglePlay();
+								break;
+							case 'nextVideo':
+								requestNext(true);
+								break;
 						}
 					});
 
-	                    function normalizeInput(url) {
-	                        const trimmed = url.trim();
-	                        if (!trimmed) {
-	                            return '';
-	                        }
+					function requestNext(force = false) {
+						if ((autoplayCheck.checked || force) && currentVideoId) {
+							statusText.textContent = 'Finding next...';
+							vscode.postMessage({ 
+								type: 'requestNextVideo', 
+								videoId: currentVideoId
+							});
+						} else {
+							statusText.textContent = 'Ended';
+						}
+					}
 
-	                        if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-	                            return trimmed;
-	                        }
+					function normalizeInput(url) {
+						const trimmed = url.trim();
+						if (!trimmed) return '';
+						if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+						return 'https://' + trimmed;
+					}
 
-	                        return 'https://' + trimmed;
-	                    }
+					function showHistory(urls) {
+						historyDropdown.innerHTML = '';
+						if (urls.length === 0) {
+							const item = document.createElement('div');
+							item.className = 'history-item';
+							item.textContent = 'No history yet';
+							historyDropdown.appendChild(item);
+						} else {
+							urls.forEach(entry => {
+								const item = document.createElement('div');
+								item.className = 'history-item';
+								item.textContent = entry.title || entry.url;
+								item.title = entry.url;
+								item.addEventListener('click', () => {
+									loadVideo(entry.url);
+								});
+								historyDropdown.appendChild(item);
+							});
+						}
+						historyDropdown.classList.add('visible');
+					}
 
-	                    function toEmbedUrl(url) {
-	                        const toEmbed = (id) => {
-	                            const params = new URLSearchParams({
-	                                rel: '0',
-	                                modestbranding: '1',
-	                                playsinline: '1',
-                                    enablejsapi: '1',
-                                    autoplay: '1'
-	                            });
-
-	                            return 'https://www.youtube.com/embed/' + id + '?' + params.toString();
-	                        };
-
-	                        if (!url) {
-	                            return '';
-	                        }
-
-	                        try {
-	                            const parsed = new URL(url);
-	                            const host = parsed.hostname.replace(/^www[.]/, '');
-
-	                            if (host === 'youtu.be') {
-	                                const id = parsed.pathname.split('/').filter(Boolean)[0];
-	                                return id ? toEmbed(id) : '';
-	                            }
-
-	                            if (host === 'youtube.com' || host === 'm.youtube.com') {
-	                                if (parsed.pathname === '/watch') {
-	                                    const id = parsed.searchParams.get('v');
-	                                    return id ? toEmbed(id) : '';
-	                                }
-
-	                                if (parsed.pathname.startsWith('/shorts/')) {
-	                                    const id = parsed.pathname.split('/').filter(Boolean)[1];
-	                                    return id ? toEmbed(id) : '';
-	                                }
-
-	                                if (parsed.pathname.startsWith('/embed/')) {
-	                                    const id = parsed.pathname.split('/').filter(Boolean)[1];
-	                                    return id ? toEmbed(id) : '';
-	                                }
-	                            }
-	                        } catch {
-	                            return '';
-	                        }
-
-	                        return '';
-	                    }
-
-	                    function showHistory(urls) {
-	                        historyDropdown.innerHTML = '';
-	                        if (urls.length === 0) {
-                            const item = document.createElement('div');
-                            item.className = 'history-item';
-                            item.textContent = 'No history yet';
-                            historyDropdown.appendChild(item);
-                        } else {
-	                            urls.forEach(entry => {
-	                                const item = document.createElement('div');
-	                                item.className = 'history-item';
-	                                item.textContent = entry.title || entry.url;
-	                                item.title = entry.url;
-	                                item.addEventListener('click', () => {
-	                                    loadVideo(entry.url);
-	                                });
-	                                historyDropdown.appendChild(item);
-	                            });
-                        }
-                        historyDropdown.classList.add('visible');
-                    }
-
-                    let isPaused = false;
-                    function togglePlay() {
-                        const command = isPaused ? 'playVideo' : 'pauseVideo';
-                        if (iframe && iframe.contentWindow) {
-                            iframe.contentWindow.postMessage(JSON.stringify({
-                                event: 'command',
-                                func: command
-                            }), '*');
-                            isPaused = !isPaused;
-                        }
-                    }
+					function togglePlay() {
+						const command = isPaused ? 'playVideo' : 'pauseVideo';
+						if (iframe && iframe.contentWindow) {
+							iframe.contentWindow.postMessage(JSON.stringify({
+								event: 'command',
+								func: command
+							}), '*');
+							isPaused = !isPaused;
+							statusText.textContent = isPaused ? 'Paused' : 'Playing';
+						}
+					}
 				</script>
 			</body>
 			</html>`;
