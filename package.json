@@ -2,7 +2,7 @@
   "name": "youtube-panel",
   "displayName": "YouTube Panel",
   "description": "Seamlessly watch YouTube directly in VS Code – tutorials, music, and streams without context switching.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "entro",
   "license": "MIT",
   "engines": {
@@ -12,7 +12,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:youtube-panel.view"
+    "onView:youtube-panel.view",
+    "onStartupFinished"
   ],
   "repository": {
     "type": "git",
@@ -38,7 +39,24 @@
           "visibility": "visible"
         }
       ]
-    }
+    },
+    "commands": [
+      {
+        "command": "youtube-panel.togglePlay",
+        "title": "YouTube: Play/Pause",
+        "category": "YouTube"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "youtube-panel.togglePlay",
+        "key": "cmd+alt+p",
+        "mac": "cmd+alt+p",
+        "linux": "ctrl+alt+p",
+        "win": "ctrl+alt+p",
+        "when": "view.youtube-panel.view.visible"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
