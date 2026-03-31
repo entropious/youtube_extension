@@ -84,14 +84,21 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "echo \"No automated extension tests configured\""
+    "test": "mocha -r ts-node/register test/**/*.test.ts"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.19",
-    "typescript": "^5.3.3",
-    "eslint": "^8.34.0",
+    "@types/sinon": "^21.0.0",
+    "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^5.52.0",
-    "@typescript-eslint/parser": "^5.52.0"
+    "@typescript-eslint/parser": "^5.52.0",
+    "chai": "^6.2.2",
+    "eslint": "^8.34.0",
+    "mocha": "^11.7.5",
+    "sinon": "^21.0.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
   }
 }
