@@ -324,6 +324,12 @@ window.addEventListener('message', event => {
 			statusText.textContent = isPaused ? 'Paused' : 'Playing';
 			
 			updateFavoriteButton();
+			if (favoritesDropdown.classList.contains('visible')) {
+				showFavorites(favorites);
+			}
+			if (historyDropdown.classList.contains('visible')) {
+				vscode.postMessage({ type: 'requestHistory' });
+			}
 			break;
 		case 'searchResults':
 			showSearchResults(message.results);
@@ -411,9 +417,16 @@ function showHistory(urls) {
 		urls.forEach(entry => {
 			const item = document.createElement('div');
 			item.className = 'history-item';
+			const isCurrent = entry.url === lastLoadedOriginalUrl;
+			if (isCurrent) {
+				item.classList.add('current');
+			}
 			
 			const text = document.createElement('div');
 			text.className = 'item-text';
+			if (isCurrent) {
+				text.classList.add('current');
+			}
 			text.textContent = entry.title || entry.url;
 			text.title = entry.url;
 			text.addEventListener('click', () => {
@@ -438,9 +451,16 @@ function showFavorites(urls) {
 		urls.forEach(entry => {
 			const item = document.createElement('div');
 			item.className = 'favorite-item';
+			const isCurrent = entry.url === lastLoadedOriginalUrl;
+			if (isCurrent) {
+				item.classList.add('current');
+			}
 			
 			const text = document.createElement('div');
 			text.className = 'item-text';
+			if (isCurrent) {
+				text.classList.add('current');
+			}
 			text.textContent = entry.title || entry.url;
 			text.title = entry.url;
 			text.addEventListener('click', () => {

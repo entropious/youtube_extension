@@ -261,6 +261,16 @@ select {
 	background: rgba(255, 255, 255, 0.08);
 }
 
+.history-item.current, .favorite-item.current {
+	border-left: 2px solid var(--accent-color);
+	background: rgba(255, 255, 255, 0.05);
+}
+
+.item-text.current {
+	color: var(--accent-color);
+	font-weight: 600;
+}
+
 .visible {
 	display: block;
 }
