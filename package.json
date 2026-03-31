@@ -2,7 +2,7 @@
   "name": "youtube-panel",
   "displayName": "YouTube Panel",
   "description": "Seamlessly watch YouTube directly in VS Code – tutorials, music, and streams without context switching.",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "publisher": "entro",
   "license": "MIT",
   "engines": {
@@ -11,6 +11,7 @@
   "categories": [
     "Other"
   ],
+  "icon": "media/icon.png",
   "activationEvents": [
     "onView:youtube-panel.view",
     "onStartupFinished"
@@ -36,6 +37,7 @@
           "type": "webview",
           "id": "youtube-panel.view",
           "name": "YouTube Video",
+          "icon": "media/icon.png",
           "visibility": "visible"
         }
       ]
