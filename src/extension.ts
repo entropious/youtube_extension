@@ -11,6 +11,8 @@ type HistoryEntry = {
 	url: string;
 	title?: string;
 };
+ 
+let provider: YouTubeViewProvider | null = null;
 
 function getProxyEmbedHtml(videoId: string, startTime: number = 0, autoplay: boolean = true): string {
     return `<!DOCTYPE html>
@@ -127,7 +129,11 @@ async function startProxyServer(): Promise<void> {
 	});
 }
 
-export function deactivate() {
+export async function deactivate() {
+	if (provider) {
+		await provider.saveCurrentState();
+	}
+
 	if (proxyServer) {
 		proxyServer.close();
 		proxyServer = null;
@@ -137,8 +143,8 @@ export function deactivate() {
 
 export async function activate(context: vscode.ExtensionContext) {
 	await startProxyServer();
-
-	const provider = new YouTubeViewProvider(context.extensionUri, context.globalState);
+ 
+	provider = new YouTubeViewProvider(context.extensionUri, context.globalState);
 
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(YouTubeViewProvider.viewType, provider)
@@ -150,7 +156,7 @@ export async function activate(context: vscode.ExtensionContext) {
 				prompt: "Enter YouTube Video URL or Search query",
 				placeHolder: "https://www.youtube.com/watch?v=... or 'lofi hip hop'"
 			});
-			if (url) {
+			if (url && provider) {
 				const resolvedUrl = await provider.resolveUrl(url);
 				provider.loadUrl(resolvedUrl);
 			}
@@ -159,19 +165,19 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('youtube-panel.togglePlay', () => {
-			provider.togglePlay();
+			provider?.togglePlay();
 		})
 	);
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('youtube-panel.nextVideo', () => {
-			provider.nextVideo();
+			provider?.nextVideo();
 		})
 	);
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('youtube-panel.openInPanel', (url: string, title?: string, startTime?: number) => {
-			provider.openInPanel(url, title, startTime);
+			provider?.openInPanel(url, title, startTime);
 		})
 	);
 }
@@ -181,11 +187,14 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'youtube-panel.view';
 	private static readonly historyKey = 'youtube-history';
 	private static readonly favoritesKey = 'youtube-favorites';
+	private static readonly timestampsKey = 'youtube-timestamps';
 
 	private _view?: vscode.WebviewView;
 	public activePanel?: vscode.WebviewPanel;
 	private _lastPanelUrl?: string;
 	private _lastPanelTime: number = 0;
+	private _lastViewUrl?: string;
+	private _lastViewTime: number = 0;
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
@@ -207,10 +216,33 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		target?.postMessage({ type: 'nextVideo' });
 	}
 
+	public async saveCurrentState(): Promise<void> {
+		if (this._lastViewUrl) {
+			await this._saveTimestamp(this._lastViewUrl, this._lastViewTime);
+		}
+		if (this.activePanel && this._lastPanelUrl) {
+			await this._saveTimestamp(this._lastPanelUrl, this._lastPanelTime);
+		}
+	}
+ 
 	public loadUrl(url: string, startTime?: number, autoplay: boolean = true) {
 		const target = this.activePanel?.webview || this._view?.webview;
 		if (target) {
 			void this._handleLoadRequest(url);
+			
+			if (this.activePanel?.webview === target) {
+				this._lastPanelUrl = url;
+				this._lastPanelTime = startTime || 0;
+			} else {
+				this._lastViewUrl = url;
+				this._lastViewTime = startTime || 0;
+			}
+			
+			// If startTime is not provided, try to load it from state
+			if (startTime === undefined) {
+				startTime = this._getTimestamp(url);
+			}
+
 			target.postMessage({
 				type: 'loadUrl',
 				value: this._formatYoutubeUrl(url, startTime, autoplay),
@@ -342,6 +374,50 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public _getHistory(): HistoryEntry[] {
 		const raw = this._state.get<unknown[]>(YouTubeViewProvider.historyKey, []);
 		return this._parseEntries(raw);
+	}
+
+	private _getTimestamp(url: string): number {
+		const timestamps = this._state.get<Record<string, number>>(YouTubeViewProvider.timestampsKey, {});
+		const videoId = this._extractVideoId(url);
+		return videoId ? (timestamps[videoId] || 0) : 0;
+	}
+
+	private async _saveTimestamp(url: string, time: number): Promise<void> {
+		const videoId = this._extractVideoId(url);
+		if (!videoId) return;
+
+		const timestamps = this._state.get<Record<string, number>>(YouTubeViewProvider.timestampsKey, {});
+		
+		// If time is close to end (e.g. within 5 sec of end), we might want to reset? 
+		// For now simple save.
+		if (Math.abs((timestamps[videoId] || 0) - time) < 1) return; // Don't save if it's the same second
+
+		timestamps[videoId] = time;
+		
+		// Keep storage lean - maybe limit to 100 recent videos
+		const keys = Object.keys(timestamps);
+		if (keys.length > 100) {
+			delete timestamps[keys[0]];
+		}
+
+		await this._state.update(YouTubeViewProvider.timestampsKey, timestamps);
+	}
+
+	private _extractVideoId(urlStr: string): string | undefined {
+		try {
+			const parsed = new URL(urlStr);
+			const host = parsed.hostname.replace(/^www\./, '');
+			if (host === 'youtu.be') return parsed.pathname.split('/').filter(Boolean)[0];
+			if (host === 'youtube.com' || host === 'm.youtube.com') {
+				if (parsed.pathname === '/watch') return parsed.searchParams.get('v') || undefined;
+				if (parsed.pathname.startsWith('/shorts/')) return parsed.pathname.split('/').filter(Boolean)[1];
+				if (parsed.pathname.startsWith('/embed/')) return parsed.pathname.split('/').filter(Boolean)[1];
+			}
+		} catch {
+			// Fallback for non-url strings that might be IDs
+			if (/^[a-zA-Z0-9_-]{11}$/.test(urlStr)) return urlStr;
+		}
+		return undefined;
 	}
 
 	private async _resolveTitle(url: string): Promise<string | undefined> {
@@ -486,7 +562,14 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			if (this.activePanel === panel) {
 				this.activePanel = undefined;
 			}
+			void this._saveTimestamp(this._lastPanelUrl || url, this._lastPanelTime);
 			this.loadUrl(this._lastPanelUrl || url, this._lastPanelTime, false);
+		});
+
+		panel.onDidChangeViewState(() => {
+			if (!panel.visible && this._lastPanelUrl) {
+				void this._saveTimestamp(this._lastPanelUrl, this._lastPanelTime);
+			}
 		});
 	}
 
@@ -504,15 +587,34 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 		this._setupWebviewHandlers(webviewView.webview, false);
 
+		webviewView.onDidChangeVisibility(() => {
+			if (!webviewView.visible && this._lastViewUrl) {
+				void this._saveTimestamp(this._lastViewUrl, this._lastViewTime);
+			}
+		});
+
 		const last = this._getHistory()[0];
 		let initialUrl = 'about:blank';
 		let initialOriginalUrl = '';
 		if (last) {
-			initialUrl = this._formatYoutubeUrl(last.url);
+			const startTime = this._getTimestamp(last.url);
+			initialUrl = this._formatYoutubeUrl(last.url, startTime);
 			initialOriginalUrl = last.url;
+			this._lastViewUrl = last.url;
+			this._lastViewTime = startTime;
 		}
 
 		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl);
+		
+		// Load the last timestamp if we have a last video
+		if (last) {
+			const timestamp = this._getTimestamp(last.url);
+			if (timestamp > 0) {
+				// We don't want to auto-load/seek here immediately because the webview might not be ready
+				// but script.js handles it via its own state or by asking for it.
+				// Actually, script.js uses INITIAL_URL_JSON which we should update to include the timestamp if possible.
+			}
+		}
 	}
 
 	private _getHtmlForWebview(initialUrl: string = 'about:blank', initialOriginalUrl: string = '') {
@@ -547,6 +649,13 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'timeUpdate':
 					if (isPanel) {
 						this._lastPanelTime = data.time;
+					} else {
+						this._lastViewTime = data.time;
+					}
+					break;
+				case 'saveTimestamp':
+					if (data.url && typeof data.time === 'number') {
+						void this._saveTimestamp(data.url, data.time);
 					}
 					break;
 				case 'requestLoad':
@@ -562,12 +671,20 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						webview.postMessage({ type: 'searchResults', results });
 					} else {
 						const resolvedUrl = await this.resolveUrl(data.value);
+						if (isPanel) {
+							this._lastPanelUrl = resolvedUrl;
+							this._lastPanelTime = 0;
+						} else {
+							this._lastViewUrl = resolvedUrl;
+							this._lastViewTime = 0;
+						}
 						void this._handleLoadRequest(resolvedUrl);
+						const startTime = this._getTimestamp(resolvedUrl);
 						webview.postMessage({
 							type: 'loadUrl',
-							value: this._formatYoutubeUrl(resolvedUrl),
+							value: this._formatYoutubeUrl(resolvedUrl, startTime),
 							originalUrl: data.value,
-							startTime: 0
+							startTime: startTime
 						});
 					}
 					break;
@@ -592,6 +709,9 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						if (isPanel) {
 							this._lastPanelUrl = nextUrl;
 							this._lastPanelTime = 0;
+						} else {
+							this._lastViewUrl = nextUrl;
+							this._lastViewTime = 0;
 						}
 						void this._handleLoadRequest(nextUrl);
 						webview.postMessage({
