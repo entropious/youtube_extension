@@ -28,6 +28,7 @@ function getProxyEmbedHtml(videoId: string, startTime: number = 0, autoplay: boo
         let v = '${videoId}';
         let s = ${startTime};
         let a = ${autoplay ? 1 : 0};
+        let ready = false;
         
         window.onYouTubeIframeAPIReady = function() {
             try {
@@ -36,6 +37,8 @@ function getProxyEmbedHtml(videoId: string, startTime: number = 0, autoplay: boo
                     playerVars: { autoplay: a, rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, start: s },
                     events: {
                         onReady: e => { 
+                            ready = true;
+                            window.parent.postMessage({type:'playerReady', videoId: v}, '*');
                             if(v && a) e.target.playVideo(); 
                             // Report time every second
                             setInterval(() => {
@@ -56,30 +59,39 @@ function getProxyEmbedHtml(videoId: string, startTime: number = 0, autoplay: boo
         if (window.YT && window.YT.Player) {
             window.onYouTubeIframeAPIReady();
         }
-    </script>
-    <script src="https://www.youtube.com/iframe_api"></script>
-    <script>
+
         window.addEventListener('message', e => {
             let data = e.data;
             if (typeof data === 'string') {
                 try { data = JSON.parse(data); } catch(err) { return; }
             }
             if (data.type === 'load') {
-                v = data.id;
-                const startTime = data.startTime || 0;
-                const startAutoplay = data.autoplay !== false;
-                if (p && p.loadVideoById) {
-                    if (startAutoplay) {
-                        p.loadVideoById({ videoId: v, startSeconds: startTime });
+                const nextId = data.id;
+                const nextStartTime = data.startTime || 0;
+                const nextAutoplay = data.autoplay !== false;
+                
+                v = nextId;
+                s = nextStartTime;
+                a = nextAutoplay;
+
+                if (ready && p && p.loadVideoById) {
+                    if (a) {
+                        p.loadVideoById({ videoId: v, startSeconds: s });
                     } else {
-                        p.cueVideoById({ videoId: v, startSeconds: startTime });
+                        p.cueVideoById({ videoId: v, startSeconds: s });
                     }
+                } else if (p && !ready) {
+                    // Player exists but not quite ready, it will use the updated v, s, a if possible
+                    // or we can wait for onReady. The onReady handler already uses v and a.
+                } else if (!p) {
+                    // constructor hasn't run yet, it will use updated v, s, a
                 }
             } else if (data.event === 'command' && p && p[data.func]) {
-                p[data.func]();
+                if (ready) p[data.func]();
             }
         });
     </script>
+    <script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>`;
 }

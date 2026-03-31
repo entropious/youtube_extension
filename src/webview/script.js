@@ -21,6 +21,8 @@ let favorites = [];
 
 let currentVideoId = extractVideoId(initialUrl);
 let isPaused = false;
+let isIframeReady = false;
+let pendingIframeLoad = null;
 
 // Load saved settings
 const savedState = vscode.getState() || { autoplay: true };
@@ -274,6 +276,14 @@ window.addEventListener('message', event => {
 		}
 	}
 
+	if (data && data.type === 'playerReady') {
+		isIframeReady = true;
+		if (pendingIframeLoad) {
+			iframe.contentWindow.postMessage(pendingIframeLoad, '*');
+			pendingIframeLoad = null;
+		}
+	}
+
 	switch (message.type) {
 		case 'loadUrl':
 			const nextId = extractVideoId(message.value);
@@ -282,8 +292,15 @@ window.addEventListener('message', event => {
 			const proxyUrlPrefix = message.value.split('/embed')[0] + '/embed';
 			
 			if (iframe.src.startsWith(proxyUrlPrefix)) {
-				iframe.contentWindow.postMessage({ type: 'load', id: nextId, startTime: startTime, autoplay: startAutoplay }, '*');
+				const loadData = { type: 'load', id: nextId, startTime: startTime, autoplay: startAutoplay };
+				if (isIframeReady) {
+					iframe.contentWindow.postMessage(loadData, '*');
+				} else {
+					pendingIframeLoad = loadData;
+				}
 			} else {
+				isIframeReady = false;
+				pendingIframeLoad = null;
 				iframe.src = message.value;
 			}
 			
