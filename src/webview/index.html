@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="Content-Security-Policy" content="%%CSP%%">
+	<style>
+		%%STYLE%%
+	</style>
+</head>
+<body>
+	<div class="top-hitbox"></div>
+	<div class="header">
+		<div class="input-row">
+			<button id="history-btn" title="Recent History">🕒</button>
+			<div class="input-container">
+				<input type="text" id="url-input" placeholder="Paste YouTube URL here...">
+				<button id="clear-btn" class="clear-btn" title="Clear">✕</button>
+			</div>
+			<button id="load-btn">Go</button>
+			<button id="next-btn" title="Next (Similar/Popular/Random)">⏭</button>
+			<button id="open-btn" title="Open in VS Code Tab">📺</button>
+		</div>
+		<div class="settings-row">
+			<div class="autoplay-group">
+				<label class="checkbox-wrapper">
+					<input type="checkbox" id="autoplay-check">
+					Continuous Play (Similar)
+				</label>
+			</div>
+			<div id="status-text">Ready</div>
+		</div>
+		<div id="history-dropdown" class="history-dropdown"></div>
+	</div>
+	<div class="player-container">
+		<div id="results-container" class="results-container"></div>
+		<div id="empty-state" style="%%EMPTY_STATE_STYLE%%">
+			<svg viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg>
+			Paste a YouTube URL to start watching.<br/>
+			<span style="font-size:11px; margin-top:8px; opacity:0.6;">Tip: Use Continuous Play to keep the music going.</span>
+		</div>
+		<iframe id="video-frame" src="%%INITIAL_URL%%" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowfullscreen></iframe>
+	</div>
+
+	<script>
+		%%SCRIPT%%
+	</script>
+</body>
+</html>
