@@ -1,5 +1,6 @@
 .vscode/**
 src/**
+!src/webview/**
 .eslintrc.json
 *.log
 *.tsbuildinfo
