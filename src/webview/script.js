@@ -89,25 +89,27 @@ function saveState() {
 
 
 
-let effectiveUrl = (savedState && savedState.currentUrl && savedState.currentUrl !== 'about:blank') 
-	? savedState.currentUrl 
-	: initialUrl;
-const effectiveOriginalUrl = (savedState && savedState.currentOriginalUrl) 
-	? savedState.currentOriginalUrl 
-	: initialOriginalUrl;
+let effectiveUrl = initialUrl;
+let effectiveOriginalUrl = initialOriginalUrl;
 
+// Prefer extension-provided initial values if they exist, otherwise fallback to saved state
+if ((effectiveUrl === 'about:blank' || !effectiveUrl) && savedState.currentUrl && savedState.currentUrl !== 'about:blank') {
+	effectiveUrl = savedState.currentUrl;
+	effectiveOriginalUrl = savedState.currentOriginalUrl || '';
+}
 
-
-// If we are loading the same URL that was in state, restore its time
-if (savedState && savedState.currentUrl === effectiveUrl && typeof savedState.currentTime === 'number' && savedState.currentTime > 0) {
+// Restore time from state only if we are loading the same video as what was in state
+if (savedState.currentUrl && extractVideoId(savedState.currentUrl) === extractVideoId(effectiveUrl) && typeof savedState.currentTime === 'number' && savedState.currentTime > 0) {
 	lastCurrentTime = savedState.currentTime;
-	// Update effectiveUrl to include the latest saved time
-	if (effectiveUrl.includes('start=')) {
-		effectiveUrl = effectiveUrl.replace(/start=\d+/, 'start=' + Math.floor(lastCurrentTime));
-	} else if (effectiveUrl.includes('?')) {
-		effectiveUrl += '&start=' + Math.floor(lastCurrentTime);
-	} else {
-		effectiveUrl += '?start=' + Math.floor(lastCurrentTime);
+	
+	// If the current URL doesn't have a start parameter, or if the saved time is newer, update it
+	// But let's trust the extension's URL if it already has a start parameter
+	if (!effectiveUrl.includes('start=')) {
+		if (effectiveUrl.includes('?')) {
+			effectiveUrl += '&start=' + Math.floor(lastCurrentTime);
+		} else {
+			effectiveUrl += '?start=' + Math.floor(lastCurrentTime);
+		}
 	}
 }
 
