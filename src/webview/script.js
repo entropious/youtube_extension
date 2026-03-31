@@ -23,8 +23,10 @@ let currentVideoId = extractVideoId(initialUrl);
 let isPaused = false;
 
 // Load saved settings
-const state = vscode.getState() || { autoplay: true };
-autoplayCheck.checked = state.autoplay;
+const savedState = vscode.getState() || { autoplay: true };
+autoplayCheck.checked = !!savedState.autoplay;
+let lastCurrentTime = 0;
+let lastGlobalSaveTime = 0;
 
 autoplayCheck.addEventListener('change', () => {
 	saveState();
@@ -37,19 +39,32 @@ function saveState() {
 	vscode.setState({ 
 		autoplay: autoplayCheck.checked,
 		currentUrl: lastLoadedUrl,
-		currentOriginalUrl: input.value
+		currentOriginalUrl: input.value,
+		currentTime: lastCurrentTime
 	});
 }
 
 
 // Priority: 1. vscode.getState(), 2. initialUrl from extension
-const savedState = vscode.getState();
 let effectiveUrl = (savedState && savedState.currentUrl && savedState.currentUrl !== 'about:blank') 
 	? savedState.currentUrl 
 	: initialUrl;
 const effectiveOriginalUrl = (savedState && savedState.currentOriginalUrl) 
 	? savedState.currentOriginalUrl 
 	: initialOriginalUrl;
+
+// If we are loading the same URL that was in state, restore its time
+if (savedState && savedState.currentUrl === effectiveUrl && typeof savedState.currentTime === 'number' && savedState.currentTime > 0) {
+	lastCurrentTime = savedState.currentTime;
+	// Update effectiveUrl to include the latest saved time
+	if (effectiveUrl.includes('start=')) {
+		effectiveUrl = effectiveUrl.replace(/start=\d+/, 'start=' + Math.floor(lastCurrentTime));
+	} else if (effectiveUrl.includes('?')) {
+		effectiveUrl += '&start=' + Math.floor(lastCurrentTime);
+	} else {
+		effectiveUrl += '?start=' + Math.floor(lastCurrentTime);
+	}
+}
 
 // FIX: If the proxy port changed since last save, update it to the current one
 if (effectiveUrl.includes('127.0.0.1') && initialUrl.includes('127.0.0.1')) {
@@ -208,7 +223,6 @@ function extractVideoId(url) {
 	return match ? match[0] : '';
 }
 
-let lastCurrentTime = 0;
 
 window.addEventListener('message', event => {
 	const message = event.data;
@@ -221,18 +235,42 @@ window.addEventListener('message', event => {
 
 	if (data && data.event === 'timeUpdate' && typeof data.time === 'number') {
 		lastCurrentTime = data.time;
+		
+		// Inform extension host (memory only, for visibility change triggers)
 		vscode.postMessage({ type: 'timeUpdate', time: lastCurrentTime });
+		
+		// VS Code state (for panel hide/show) - can be updated frequently as it's memory-mapped
+		saveState();
+		
+		// Global storage (to survive VS Code restart) - only every 5 seconds
+		const now = Date.now();
+		if (now - lastGlobalSaveTime > 5000) {
+			lastGlobalSaveTime = now;
+			vscode.postMessage({ 
+				type: 'saveTimestamp', 
+				url: lastLoadedOriginalUrl, 
+				time: Math.floor(lastCurrentTime) 
+			});
+		}
 	}
 
 	if (data && data.event === 'infoDelivery' && data.info) {
-		if (data.info.playerState === 0) {
+		if (data.info.playerState === 0) { // ENDED
 			requestNext();
-		} else if (data.info.playerState === 1) {
+			// Reset time on end
+			vscode.postMessage({ type: 'saveTimestamp', url: lastLoadedOriginalUrl, time: 0 });
+		} else if (data.info.playerState === 1) { // PLAYING
 			isPaused = false;
 			statusText.textContent = 'Playing';
-		} else if (data.info.playerState === 2) {
+		} else if (data.info.playerState === 2) { // PAUSED
 			isPaused = true;
 			statusText.textContent = 'Paused';
+			// Save immediately on pause
+			vscode.postMessage({ 
+				type: 'saveTimestamp', 
+				url: lastLoadedOriginalUrl, 
+				time: Math.floor(lastCurrentTime) 
+			});
 		}
 	}
 
