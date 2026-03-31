@@ -9,7 +9,7 @@ type HistoryEntry = {
 	title?: string;
 };
 
-function getProxyEmbedHtml(videoId: string): string {
+function getProxyEmbedHtml(videoId: string, startTime: number = 0): string {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -21,15 +21,23 @@ function getProxyEmbedHtml(videoId: string): string {
     <script>
         let p;
         let v = '${videoId}';
+        let s = ${startTime};
         
         window.onYouTubeIframeAPIReady = function() {
             try {
                 p = new YT.Player('p', {
                     height: '100%', width: '100%', videoId: v,
-                    playerVars: { autoplay: 1, rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1 },
+                    playerVars: { autoplay: 1, rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, start: s },
                     events: {
                         onReady: e => { 
                             if(v) e.target.playVideo(); 
+                            // Report time every second
+                            setInterval(() => {
+                                if (p && p.getCurrentTime) {
+                                    const time = p.getCurrentTime();
+                                    window.parent.postMessage({event:'timeUpdate', time: Math.floor(time)}, '*');
+                                }
+                            }, 1000);
                         },
                         onStateChange: e => { 
                             window.parent.postMessage({event:'infoDelivery',info:{playerState:e.data}}, '*'); 
@@ -77,6 +85,7 @@ async function startProxyServer(): Promise<void> {
 		}
 
 		const videoId = url.searchParams.get('v') ?? '';
+		const startTime = parseInt(url.searchParams.get('start') ?? '0', 10);
 		if (videoId && !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
 			res.writeHead(400); res.end('Invalid video id'); return;
 		}
@@ -86,7 +95,7 @@ async function startProxyServer(): Promise<void> {
 			'Access-Control-Allow-Origin': '*',
 			'Cache-Control': 'no-cache'
 		});
-		res.end(getProxyEmbedHtml(videoId));
+		res.end(getProxyEmbedHtml(videoId, startTime));
 	});
 
 	await new Promise<void>((resolve, reject) => {
@@ -144,6 +153,12 @@ export async function activate(context: vscode.ExtensionContext) {
 			provider.nextVideo();
 		})
 	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('youtube-panel.openInPanel', (url: string, title?: string, startTime?: number) => {
+			YouTubeViewProvider.openInPanel(context.extensionUri, url, title, startTime);
+		})
+	);
 }
 
 class YouTubeViewProvider implements vscode.WebviewViewProvider {
@@ -162,6 +177,10 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._view?.webview.postMessage({ type: 'togglePlay' });
 	}
 
+	public pause() {
+		this._view?.webview.postMessage({ type: 'pause' });
+	}
+
 	public nextVideo() {
 		this._view?.webview.postMessage({ type: 'nextVideo' });
 	}
@@ -177,13 +196,14 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private _formatYoutubeUrl(url: string): string {
+	private _formatYoutubeUrl(url: string, startTime: number = 0): string {
 		const toEmbed = (id: string): string => {
+			const startParam = startTime > 0 ? `&start=${startTime}` : '';
 			if (proxyPort) {
-				return `http://127.0.0.1:${proxyPort}/embed?v=${id}`;
+				return `http://127.0.0.1:${proxyPort}/embed?v=${id}${startParam}`;
 			}
 
-			return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1&autoplay=1`;
+			return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1&autoplay=1${startParam}`;
 		};
 
 		try {
@@ -310,6 +330,24 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		return filtered[Math.floor(Math.random() * Math.min(filtered.length, 5))];
 	}
 
+	public static openInPanel(extensionUri: vscode.Uri, url: string, title?: string, startTime?: number) {
+		const panel = vscode.window.createWebviewPanel(
+			'youtube-player',
+			title || 'YouTube Player',
+			vscode.ViewColumn.One,
+			{ enableScripts: true, retainContextWhenHidden: true }
+		);
+
+		const dummyState: any = {
+			get: () => undefined,
+			update: () => Promise.resolve(),
+			keys: () => []
+		};
+
+		const provider = new YouTubeViewProvider(extensionUri, dummyState);
+		panel.webview.html = provider._getHtmlForWebview(provider._formatYoutubeUrl(url, startTime), url);
+	}
+
 	public resolveWebviewView(
 		webviewView: vscode.WebviewView,
 		_context: vscode.WebviewViewResolveContext,
@@ -339,7 +377,8 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					void this._saveUrl(data.value);
 					break;
 				case 'openExternal':
-					void vscode.env.openExternal(vscode.Uri.parse(data.value));
+					this.pause();
+					vscode.commands.executeCommand('youtube-panel.openInPanel', data.url, data.title, data.time);
 					break;
 				case 'requestHistory':
 					this._view?.webview.postMessage({ type: 'history', value: this._getHistory() });
@@ -587,7 +626,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						<input type="text" id="url-input" placeholder="Paste YouTube URL here...">
 						<button id="load-btn">Go</button>
 						<button id="next-btn" title="Next (Similar/Popular/Random)">⏭</button>
-						<button id="open-btn" title="Open in Browser">↗</button>
+						<button id="open-btn" title="Open in VS Code Tab">📺</button>
 					</div>
 					<div class="settings-row">
 						<div class="autoplay-group">
@@ -708,7 +747,12 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					openBtn.addEventListener('click', () => {
 						const normalized = normalizeInput(input.value);
 						if (normalized) {
-							vscode.postMessage({ type: 'openExternal', value: normalized });
+							vscode.postMessage({ 
+								type: 'openExternal', 
+								url: normalized,
+								time: lastCurrentTime || 0,
+								title: statusText.textContent === 'Playing' || statusText.textContent === 'Paused' ? undefined : statusText.textContent
+							});
 						}
 					});
 
@@ -761,6 +805,8 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						return match ? match[0] : '';
 					}
 
+					let lastCurrentTime = 0;
+
 					window.addEventListener('message', event => {
 						const message = event.data;
 						
@@ -768,6 +814,10 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						let data = message;
 						if (typeof data === 'string') {
 							try { data = JSON.parse(data); } catch(e) { return; }
+						}
+
+						if (data && data.event === 'timeUpdate' && typeof data.time === 'number') {
+							lastCurrentTime = data.time;
 						}
 
 						if (data && data.event === 'infoDelivery' && data.info) {
@@ -796,6 +846,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 								input.value = message.originalUrl || message.value;
 								currentVideoId = nextId;
 								lastLoadedUrl = message.value;
+								lastCurrentTime = 0; // Reset time for new video
 								saveState();
 								
 								emptyState.style.display = 'none';
@@ -807,6 +858,9 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 								break;
 							case 'togglePlay':
 								togglePlay();
+								break;
+							case 'pause':
+								pause();
 								break;
 							case 'nextVideo':
 								requestNext(true);
@@ -863,7 +917,15 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 								event: 'command',
 								func: command
 							}, '*');
-						// isPaused will be updated by the state change message
+						}
+					}
+
+					function pause() {
+						if (!isPaused && iframe && iframe.contentWindow) {
+							iframe.contentWindow.postMessage({
+								event: 'command',
+								func: 'pauseVideo'
+							}, '*');
 						}
 					}
 				</script>
