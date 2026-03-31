@@ -1,7 +1,35 @@
 const vscode = acquireVsCodeApi();
 
+function log(msg, ...args) {
+    if (msg && (msg.includes('ERROR') || msg.includes('CRITICAL'))) {
+        console.error(`[YOUTUBE_EXT][WEBVIEW] ${msg}`, ...args);
+        vscode.postMessage({ type: 'log', message: msg, args: args });
+    }
+}
+
+function proxyLog(level, msg, ...args) {
+    if (level !== 'error') return; // ONLY ERRORS
+    console[level](msg, ...args);
+    window.parent.postMessage({ type: 'proxyLog', level, message: msg, args }, '*');
+}
+
+
+
+window.onerror = function(msg, url, line, col, error) {
+    log('UNHANDLED ERROR:', { msg, url, line, col, error: error?.stack || error });
+};
+
+window.addEventListener('unhandledrejection', function(event) {
+    log('UNHANDLED REJECTION:', event.reason);
+});
+
+
+
+
 const initialUrl = %%INITIAL_URL_JSON%%;
 const initialOriginalUrl = %%INITIAL_ORIGINAL_URL_JSON%%;
+const currentProxyPort = %%PROXY_PORT_JSON%%;
+
 const input = document.getElementById('url-input');
 const clearBtn = document.getElementById('clear-btn');
 const nextBtn = document.getElementById('next-btn');
@@ -25,10 +53,13 @@ let isIframeReady = false;
 let pendingIframeLoad = null;
 
 // Load saved settings
-const savedState = vscode.getState() || { autoplay: true };
+const savedState = vscode.getState() || {};
+if (savedState.autoplay === undefined) savedState.autoplay = true;
 autoplayCheck.checked = !!savedState.autoplay;
+
 let lastCurrentTime = 0;
 let lastGlobalSaveTime = 0;
+let lastRetryTime = 0;
 
 autoplayCheck.addEventListener('change', () => {
 	saveState();
@@ -37,23 +68,35 @@ autoplayCheck.addEventListener('change', () => {
 let lastLoadedUrl = initialUrl;
 let lastLoadedOriginalUrl = initialOriginalUrl;
 
+// Global variable to keep track of the last saved state
+let lastStateJson = '';
+
 function saveState() {
-	vscode.setState({ 
+	const state = { 
 		autoplay: autoplayCheck.checked,
 		currentUrl: lastLoadedUrl,
-		currentOriginalUrl: input.value,
+		currentOriginalUrl: lastLoadedOriginalUrl,
 		currentTime: lastCurrentTime
-	});
+	};
+	const stateJson = JSON.stringify(state);
+	if (stateJson !== lastStateJson) {
+		vscode.setState(state);
+		lastStateJson = stateJson;
+	}
 }
 
 
-// Priority: 1. vscode.getState(), 2. initialUrl from extension
+
+
+
 let effectiveUrl = (savedState && savedState.currentUrl && savedState.currentUrl !== 'about:blank') 
 	? savedState.currentUrl 
 	: initialUrl;
 const effectiveOriginalUrl = (savedState && savedState.currentOriginalUrl) 
 	? savedState.currentOriginalUrl 
 	: initialOriginalUrl;
+
+
 
 // If we are loading the same URL that was in state, restore its time
 if (savedState && savedState.currentUrl === effectiveUrl && typeof savedState.currentTime === 'number' && savedState.currentTime > 0) {
@@ -69,17 +112,19 @@ if (savedState && savedState.currentUrl === effectiveUrl && typeof savedState.cu
 }
 
 // FIX: If the proxy port changed since last save, update it to the current one
-if (effectiveUrl.includes('127.0.0.1') && initialUrl.includes('127.0.0.1')) {
+// FIX: If the proxy port changed since last save, update it to the current one
+if (effectiveUrl.includes('127.0.0.1') && currentProxyPort > 0) {
 	try {
-		const currentPort = new URL(initialUrl).port;
-		const savedPort = new URL(effectiveUrl).port;
-		if (currentPort && savedPort && currentPort !== savedPort) {
-			effectiveUrl = effectiveUrl.replace('127.0.0.1:' + savedPort, '127.0.0.1:' + currentPort);
+		const urlObj = new URL(effectiveUrl);
+		if (urlObj.port && urlObj.port != currentProxyPort) {
+			effectiveUrl = effectiveUrl.replace('127.0.0.1:' + urlObj.port, '127.0.0.1:' + currentProxyPort);
 		}
+
 	} catch (e) {
-		// Ignored
+		log('Error during port fix:', e);
 	}
 }
+
 
 lastLoadedUrl = effectiveUrl;
 lastLoadedOriginalUrl = effectiveOriginalUrl;
@@ -93,11 +138,15 @@ if (effectiveUrl && effectiveUrl !== 'about:blank') {
 	iframe.src = effectiveUrl;
 	emptyState.style.display = 'none';
 	statusText.textContent = 'Loading...';
+	currentVideoId = extractVideoId(effectiveUrl);
 } else {
 	iframe.src = 'about:blank';
 	emptyState.style.display = 'flex';
 	statusText.textContent = 'Ready';
+	currentVideoId = '';
 }
+
+
 
 vscode.postMessage({ type: 'webviewReady' });
 vscode.postMessage({ type: 'requestFavorites' });
@@ -152,11 +201,21 @@ favoritesBtn.addEventListener('click', (e) => {
 	if (favoritesDropdown.classList.contains('visible')) {
 		favoritesDropdown.classList.remove('visible');
 	} else {
+		log('Requesting favorites from extension');
 		vscode.postMessage({ type: 'requestFavorites' });
 	}
 });
 
+historyDropdown.addEventListener('click', (e) => {
+	e.stopPropagation();
+});
+
+favoritesDropdown.addEventListener('click', (e) => {
+	e.stopPropagation();
+});
+
 favCurrentBtn.addEventListener('click', () => {
+
     if (!currentVideoId) return;
     
     const currentlyFavorited = isFavorited(lastLoadedOriginalUrl);
@@ -176,8 +235,13 @@ document.addEventListener('click', () => {
 	favoritesDropdown.classList.remove('visible');
 });
 
+
+
+
+
 function loadVideo(url) {
-	let normalized = url.trim();
+	const normalized = normalizeInput(url);
+	
 	if (!normalized) {
 		statusText.textContent = 'Invalid Input';
 		return;
@@ -188,21 +252,25 @@ function loadVideo(url) {
 	if (isSearch) {
 		statusText.textContent = 'Searching...';
 	} else {
-		normalized = normalizeInput(normalized);
 		statusText.textContent = 'Loading...';
 	}
 
-	currentVideoId = extractVideoId(normalized);
 	vscode.postMessage({ type: 'requestLoad', value: normalized });
+
+
 	
-	resultsContainer.style.display = 'none';
-	iframe.style.display = 'block';
-	emptyState.style.display = 'none';
-	historyDropdown.classList.remove('visible');
-	favoritesDropdown.classList.remove('visible');
+	setTimeout(() => {
+		resultsContainer.style.display = 'none';
+		iframe.style.display = 'block';
+		historyDropdown.classList.remove('visible');
+		favoritesDropdown.classList.remove('visible');
+	}, 50);
+
 	
 	updateFavoriteButton();
 }
+
+
 
 function extractVideoId(url) {
 	if (!url) return '';
@@ -235,8 +303,31 @@ window.addEventListener('message', event => {
 		try { data = JSON.parse(data); } catch(e) { return; }
 	}
 
+	if (data && data.type === 'proxyLog') {
+		vscode.postMessage({ type: 'proxyLog', level: data.level, message: data.message, args: data.args });
+	}
+
 	if (data && data.event === 'timeUpdate' && typeof data.time === 'number') {
+		// Ignore events from old videos
+		if (data.videoId && data.videoId !== currentVideoId) {
+			log('Ignoring timeUpdate from old video:', data.videoId, 'current:', currentVideoId);
+			return;
+		}
+		
+		// Self-healing: if the actual video ID in the player doesn't match what we expect
+		if (data.actualVideoId && currentVideoId && data.actualVideoId !== currentVideoId) {
+			log('CRITICAL: Player is playing WRONG video ID:', data.actualVideoId, 'expected:', currentVideoId);
+			if (!lastRetryTime || Date.now() - lastRetryTime > 5000) {
+				log('Attempting emergency retry of load command...');
+				lastRetryTime = Date.now();
+				const retryData = { type: 'load', id: currentVideoId, startTime: lastCurrentTime, autoplay: true };
+				iframe.contentWindow.postMessage(retryData, '*');
+			}
+		}
+
 		lastCurrentTime = data.time;
+
+
 		
 		// Inform extension host (memory only, for visibility change triggers)
 		vscode.postMessage({ type: 'timeUpdate', time: lastCurrentTime });
@@ -257,14 +348,17 @@ window.addEventListener('message', event => {
 	}
 
 	if (data && data.event === 'infoDelivery' && data.info) {
-		if (data.info.playerState === 0) { // ENDED
-			requestNext();
-			// Reset time on end
-			vscode.postMessage({ type: 'saveTimestamp', url: lastLoadedOriginalUrl, time: 0 });
-		} else if (data.info.playerState === 1) { // PLAYING
+		// Ignore events from old videos
+		if (data.videoId && data.videoId !== currentVideoId) {
+			log('Ignoring infoDelivery from old video:', data.videoId, 'current:', currentVideoId);
+			return;
+		}
+
+		const newState = data.info.playerState;
+		if (newState === 1) { // PLAYING
 			isPaused = false;
 			statusText.textContent = 'Playing';
-		} else if (data.info.playerState === 2) { // PAUSED
+		} else if (newState === 2) { // PAUSED
 			isPaused = true;
 			statusText.textContent = 'Paused';
 			// Save immediately on pause
@@ -284,21 +378,30 @@ window.addEventListener('message', event => {
 		}
 	}
 
+
+
 	switch (message.type) {
 		case 'loadUrl':
 			const nextId = extractVideoId(message.value);
 			const startTime = message.startTime || 0;
 			const startAutoplay = message.autoplay !== false;
 			const proxyUrlPrefix = message.value.split('/embed')[0] + '/embed';
+			const isSameVideo = nextId === currentVideoId;
+			const isSameProxy = iframe.src.startsWith(proxyUrlPrefix);
 			
-			if (iframe.src.startsWith(proxyUrlPrefix)) {
+			if (isSameProxy) {
+
 				const loadData = { type: 'load', id: nextId, startTime: startTime, autoplay: startAutoplay };
+				
 				if (isIframeReady) {
 					iframe.contentWindow.postMessage(loadData, '*');
 				} else {
 					pendingIframeLoad = loadData;
 				}
+
+
 			} else {
+				log('New proxy instance or port changed, reloading iframe.src', message.value);
 				isIframeReady = false;
 				pendingIframeLoad = null;
 				iframe.src = message.value;
@@ -306,9 +409,12 @@ window.addEventListener('message', event => {
 			
 			input.value = message.originalUrl || message.value;
 			clearBtn.style.display = input.value ? 'block' : 'none';
+			
+			const oldId = currentVideoId;
 			currentVideoId = nextId;
 			lastLoadedUrl = message.value;
 			lastLoadedOriginalUrl = message.originalUrl || message.value;
+
 			
 			// Only reset time if it's a new video or if it's not a resume-from-pause event
 			if (startTime === 0) {
@@ -318,19 +424,21 @@ window.addEventListener('message', event => {
 			}
 			
 			saveState();
+
+
+
 			
 			emptyState.style.display = 'none';
+			statusText.textContent = 'Loading...';
 			isPaused = !startAutoplay;
-			statusText.textContent = isPaused ? 'Paused' : 'Playing';
+
 			
 			updateFavoriteButton();
-			if (favoritesDropdown.classList.contains('visible')) {
-				showFavorites(favorites);
-			}
-			if (historyDropdown.classList.contains('visible')) {
-				vscode.postMessage({ type: 'requestHistory' });
-			}
+			historyDropdown.classList.remove('visible');
+			favoritesDropdown.classList.remove('visible');
 			break;
+
+
 		case 'searchResults':
 			showSearchResults(message.results);
 			break;
@@ -342,6 +450,8 @@ window.addEventListener('message', event => {
 			showFavorites(favorites);
 			updateFavoriteButton();
 			break;
+
+
 		case 'togglePlay':
 			togglePlay();
 			break;
@@ -429,12 +539,24 @@ function showHistory(urls) {
 			}
 			text.textContent = entry.title || entry.url;
 			text.title = entry.url;
-			text.addEventListener('click', () => {
+			
+			// Click the whole item
+			item.addEventListener('click', () => {
 				loadVideo(entry.url);
+			});
+
+			const remove = document.createElement('button');
+			remove.className = 'remove-btn';
+			remove.textContent = 'Remove';
+			remove.addEventListener('click', (e) => {
+				e.stopPropagation();
+				vscode.postMessage({ type: 'removeHistory', url: entry.url });
 			});
 			
 			item.appendChild(text);
+			item.appendChild(remove);
 			historyDropdown.appendChild(item);
+
 		});
 	}
 	historyDropdown.classList.add('visible');
@@ -463,7 +585,9 @@ function showFavorites(urls) {
 			}
 			text.textContent = entry.title || entry.url;
 			text.title = entry.url;
-			text.addEventListener('click', () => {
+			
+			// Move click listener to the entire item for better hit area
+			item.addEventListener('click', () => {
 				loadVideo(entry.url);
 			});
 
@@ -471,13 +595,14 @@ function showFavorites(urls) {
 			remove.className = 'remove-btn';
 			remove.textContent = 'Remove';
 			remove.addEventListener('click', (e) => {
-				e.stopPropagation();
+				e.stopPropagation(); // Prevent loading the video when removing
 				vscode.postMessage({ type: 'removeFavorite', url: entry.url });
 			});
 			
 			item.appendChild(text);
 			item.appendChild(remove);
 			favoritesDropdown.appendChild(item);
+
 		});
 	}
 	favoritesDropdown.classList.add('visible');
@@ -488,13 +613,17 @@ function isFavorited(url) {
     return favorites.some(f => f.url === url);
 }
 
+
+
 function updateFavoriteButton() {
     if (!currentVideoId) {
         favCurrentBtn.style.display = 'none';
         return;
     }
     favCurrentBtn.style.display = 'block';
-    if (isFavorited(lastLoadedOriginalUrl)) {
+    const isFav = isFavorited(lastLoadedOriginalUrl);
+
+    if (isFav) {
         favCurrentBtn.classList.add('active');
         favCurrentBtn.title = 'Remove from Favorites';
     } else {
@@ -502,6 +631,7 @@ function updateFavoriteButton() {
         favCurrentBtn.title = 'Add to Favorites';
     }
 }
+
 
 function togglePlay() {
 	const command = isPaused ? 'playVideo' : 'pauseVideo';
