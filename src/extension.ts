@@ -60,7 +60,8 @@ function getProxyEmbedHtml(videoId: string, startTime: number = 0): string {
             }
             if (data.type === 'load') {
                 v = data.id;
-                if (p && p.loadVideoById) p.loadVideoById(v);
+                const startTime = data.startTime || 0;
+                if (p && p.loadVideoById) p.loadVideoById({ videoId: v, startSeconds: startTime });
             } else if (data.event === 'command' && p && p[data.func]) {
                 p[data.func]();
             }
@@ -156,7 +157,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('youtube-panel.openInPanel', (url: string, title?: string, startTime?: number) => {
-			YouTubeViewProvider.openInPanel(context.extensionUri, url, title, startTime);
+			YouTubeViewProvider.openInPanel(context.extensionUri, url, provider, title, startTime);
 		})
 	);
 }
@@ -185,18 +186,19 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._view?.webview.postMessage({ type: 'nextVideo' });
 	}
 
-	public loadUrl(url: string) {
+	public loadUrl(url: string, startTime?: number) {
 		if (this._view) {
 			void this._handleLoadRequest(url);
 			this._view.webview.postMessage({
 				type: 'loadUrl',
-				value: this._formatYoutubeUrl(url),
-				originalUrl: url
+				value: this._formatYoutubeUrl(url, startTime),
+				originalUrl: url,
+				startTime: startTime
 			});
 		}
 	}
 
-	private _formatYoutubeUrl(url: string, startTime: number = 0): string {
+	public _formatYoutubeUrl(url: string, startTime: number = 0): string {
 		const toEmbed = (id: string): string => {
 			const startParam = startTime > 0 ? `&start=${startTime}` : '';
 			if (proxyPort) {
@@ -251,7 +253,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		await this._state.update(YouTubeViewProvider.historyKey, deduped.slice(0, 50));
 	}
 
-	private async _handleLoadRequest(url: string): Promise<void> {
+	public async _handleLoadRequest(url: string): Promise<void> {
 		// Save immediately to avoid race conditions
 		await this._saveUrl(url);
 		
@@ -262,7 +264,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private _getHistory(): HistoryEntry[] {
+	public _getHistory(): HistoryEntry[] {
 		const raw = this._state.get<unknown[]>(YouTubeViewProvider.historyKey, []);
 		const history = raw
 			.map((item): HistoryEntry | null => {
@@ -324,13 +326,13 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private async _findNextVideo(currentId: string): Promise<string | undefined> {
+	public async _findNextVideo(currentId: string): Promise<string | undefined> {
 		const ids = await this._fetchRelated(currentId);
 		const filtered = ids.filter(id => id !== currentId);
 		return filtered[Math.floor(Math.random() * Math.min(filtered.length, 5))];
 	}
 
-	public static openInPanel(extensionUri: vscode.Uri, url: string, title?: string, startTime?: number) {
+	public static openInPanel(extensionUri: vscode.Uri, url: string, sidebarProvider: YouTubeViewProvider, title?: string, startTime?: number) {
 		const panel = vscode.window.createWebviewPanel(
 			'youtube-player',
 			title || 'YouTube Player',
@@ -346,6 +348,46 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 		const provider = new YouTubeViewProvider(extensionUri, dummyState);
 		panel.webview.html = provider._getHtmlForWebview(provider._formatYoutubeUrl(url, startTime), url);
+
+		let lastKnownTime = startTime || 0;
+		let lastKnownUrl = url;
+
+		panel.webview.onDidReceiveMessage(data => {
+			if (data.type === 'timeUpdate') {
+				lastKnownTime = data.time;
+			} else if (data.type === 'requestLoad') {
+				lastKnownUrl = data.value;
+				lastKnownTime = 0;
+				void sidebarProvider._handleLoadRequest(data.value);
+				panel.webview.postMessage({
+					type: 'loadUrl',
+					value: provider._formatYoutubeUrl(data.value),
+					originalUrl: data.value,
+					startTime: 0
+				});
+			} else if (data.type === 'requestHistory') {
+				panel.webview.postMessage({ type: 'history', value: sidebarProvider._getHistory() });
+			} else if (data.type === 'requestNextVideo') {
+				sidebarProvider._findNextVideo(data.videoId).then(nextId => {
+					if (nextId) {
+						const nextUrl = `https://www.youtube.com/watch?v=${nextId}`;
+						lastKnownUrl = nextUrl;
+						lastKnownTime = 0;
+						void sidebarProvider._handleLoadRequest(nextUrl);
+						panel.webview.postMessage({
+							type: 'loadUrl',
+							value: provider._formatYoutubeUrl(nextUrl),
+							originalUrl: nextUrl,
+							startTime: 0
+						});
+					}
+				});
+			}
+		});
+
+		panel.onDidDispose(() => {
+			sidebarProvider.loadUrl(lastKnownUrl, lastKnownTime);
+		});
 	}
 
 	public resolveWebviewView(
@@ -820,6 +862,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 						if (data && data.event === 'timeUpdate' && typeof data.time === 'number') {
 							lastCurrentTime = data.time;
+							vscode.postMessage({ type: 'timeUpdate', time: lastCurrentTime });
 						}
 
 						if (data && data.event === 'infoDelivery' && data.info) {
@@ -837,10 +880,11 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						switch (message.type) {
 							case 'loadUrl':
 								const nextId = extractVideoId(message.value);
+								const startTime = message.startTime || 0;
 								const proxyUrlPrefix = message.value.split('/embed')[0] + '/embed';
 								
 								if (iframe.src.startsWith(proxyUrlPrefix)) {
-									iframe.contentWindow.postMessage({ type: 'load', id: nextId }, '*');
+									iframe.contentWindow.postMessage({ type: 'load', id: nextId, startTime: startTime }, '*');
 								} else {
 									iframe.src = message.value;
 								}
