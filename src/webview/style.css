@@ -133,15 +133,44 @@ button:hover {
 	background: var(--vscode-button-hoverBackground);
 }
 
-#history-btn {
+#history-btn, #favorites-btn {
 	background: transparent;
 	font-size: 14px;
 	padding: 0 4px;
 	color: #aaa;
+    border: none;
 }
 
-#history-btn:hover {
+#history-btn:hover, #favorites-btn:hover {
 	color: #fff;
+    background: transparent;
+}
+
+#fav-current-btn, #next-btn, #open-btn {
+	background: rgba(255, 255, 255, 0.08); /* Grey background */
+	color: #ccc;
+    font-size: 14px;
+    padding: 0;
+    width: 32px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#fav-current-btn:hover, #next-btn:hover, #open-btn:hover {
+	color: #fff;
+    background: rgba(255, 255, 255, 0.15);
+}
+
+#fav-current-btn {
+	color: #777;
+}
+
+#fav-current-btn.active {
+	color: #ffcc00;
+	text-shadow: 0 0 8px rgba(255, 204, 0, 0.4);
 }
 
 .player-container {
@@ -178,7 +207,7 @@ select {
 	accent-color: var(--accent-color);
 }
 
-.history-dropdown {
+.dropdown {
 	display: none;
 	position: absolute;
 	top: 100%;
@@ -187,13 +216,13 @@ select {
 	background: #1e1e1e;
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	border-radius: 4px;
-	max-height: 300px;
+	max-height: 400px;
 	overflow-y: auto;
 	z-index: 2000;
 	box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
 }
 
-.history-item {
+.history-item, .favorite-item {
 	padding: 10px 14px;
 	cursor: pointer;
 	white-space: nowrap;
@@ -202,9 +231,33 @@ select {
 	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 	transition: background 0.2s;
 	font-size: 12px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
 }
 
-.history-item:hover {
+.item-text {
+	flex-grow: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.remove-btn {
+	opacity: 0.3;
+	padding: 4px 8px;
+	font-size: 10px;
+	margin-left: 8px;
+	color: #fff;
+	background: transparent;
+	border-radius: 4px;
+}
+
+.remove-btn:hover {
+	opacity: 1;
+	background: rgba(255, 0, 0, 0.2);
+}
+
+.history-item:hover, .favorite-item:hover {
 	background: rgba(255, 255, 255, 0.08);
 }
 

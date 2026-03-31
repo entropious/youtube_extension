@@ -180,6 +180,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	public static readonly viewType = 'youtube-panel.view';
 	private static readonly historyKey = 'youtube-history';
+	private static readonly favoritesKey = 'youtube-favorites';
 
 	private _view?: vscode.WebviewView;
 	public activePanel?: vscode.WebviewPanel;
@@ -284,12 +285,42 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		
 		if (title) {
 			await this._saveUrl(url, title);
+			
+			// Update favorites if it exists there too
+			const favorites = this._getFavorites();
+			const index = favorites.findIndex(f => f.url === url);
+			if (index !== -1 && !favorites[index].title) {
+				favorites[index].title = title;
+				await this._state.update(YouTubeViewProvider.favoritesKey, favorites);
+			}
 		}
 	}
 
-	public _getHistory(): HistoryEntry[] {
-		const raw = this._state.get<unknown[]>(YouTubeViewProvider.historyKey, []);
-		const history = raw
+	public _getFavorites(): HistoryEntry[] {
+		const raw = this._state.get<unknown[]>(YouTubeViewProvider.favoritesKey, []);
+		return this._parseEntries(raw);
+	}
+
+	private async _saveFavorite(url: string, title?: string): Promise<void> {
+		const normalized = url.trim();
+		if (!normalized) return;
+
+		const favorites = this._getFavorites();
+		if (favorites.some(f => f.url === normalized)) return;
+
+		const finalTitle = title || await this._resolveTitle(normalized);
+		favorites.unshift({ url: normalized, title: finalTitle });
+		await this._state.update(YouTubeViewProvider.favoritesKey, favorites);
+	}
+
+	private async _removeFavorite(url: string): Promise<void> {
+		const favorites = this._getFavorites();
+		const filtered = favorites.filter(f => f.url !== url);
+		await this._state.update(YouTubeViewProvider.favoritesKey, filtered);
+	}
+
+	private _parseEntries(raw: unknown[]): HistoryEntry[] {
+		return raw
 			.map((item): HistoryEntry | null => {
 				if (typeof item === 'string') {
 					return { url: item };
@@ -306,8 +337,11 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				return null;
 			})
 			.filter((entry): entry is HistoryEntry => Boolean(entry));
-		
-		return history;
+	}
+
+	public _getHistory(): HistoryEntry[] {
+		const raw = this._state.get<unknown[]>(YouTubeViewProvider.historyKey, []);
+		return this._parseEntries(raw);
 	}
 
 	private async _resolveTitle(url: string): Promise<string | undefined> {
@@ -539,6 +573,17 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					break;
 				case 'requestHistory':
 					webview.postMessage({ type: 'history', value: this._getHistory() });
+					break;
+				case 'requestFavorites':
+					webview.postMessage({ type: 'favorites', value: this._getFavorites() });
+					break;
+				case 'addFavorite':
+					await this._saveFavorite(data.url, data.title);
+					webview.postMessage({ type: 'favorites', value: this._getFavorites() });
+					break;
+				case 'removeFavorite':
+					await this._removeFavorite(data.url);
+					webview.postMessage({ type: 'favorites', value: this._getFavorites() });
 					break;
 				case 'requestNextVideo':
 					const nextId = await this._findNextVideo(data.videoId);
