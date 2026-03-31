@@ -643,19 +643,44 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						gap: 8px;
 					}
 
-					input[type="text"] {
+					.input-container {
+						position: relative;
 						flex-grow: 1;
+						display: flex;
+						align-items: center;
+					}
+
+					input[type="text"] {
+						width: 100%;
 						background: var(--input-bg);
 						color: #fff;
 						border: 1px solid rgba(255, 255, 255, 0.1);
 						border-radius: 4px;
-						padding: 6px 10px;
+						padding: 6px 28px 6px 10px;
 						outline: none;
 						transition: border-color 0.2s;
 					}
 
 					input[type="text"]:focus {
 						border-color: var(--accent-color);
+					}
+
+					.clear-btn {
+						position: absolute;
+						right: 4px;
+						background: transparent !important;
+						border: none;
+						color: rgba(255, 255, 255, 0.4);
+						cursor: pointer;
+						font-size: 14px;
+						padding: 4px;
+						display: none;
+						z-index: 10;
+						line-height: 1;
+					}
+
+					.clear-btn:hover {
+						color: #fff;
 					}
 
 					button {
@@ -838,7 +863,10 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				<div class="header">
 					<div class="input-row">
 						<button id="history-btn" title="Recent History">🕒</button>
-						<input type="text" id="url-input" placeholder="Paste YouTube URL here...">
+						<div class="input-container">
+							<input type="text" id="url-input" placeholder="Paste YouTube URL here...">
+							<button id="clear-btn" class="clear-btn" title="Clear">✕</button>
+						</div>
 						<button id="load-btn">Go</button>
 						<button id="next-btn" title="Next (Similar/Popular/Random)">⏭</button>
 						<button id="open-btn" title="Open in VS Code Tab">📺</button>
@@ -870,6 +898,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					const initialUrl = ${JSON.stringify(initialUrl)};
 					const initialOriginalUrl = ${JSON.stringify(initialOriginalUrl)};
 					const input = document.getElementById('url-input');
+					const clearBtn = document.getElementById('clear-btn');
 					const loadBtn = document.getElementById('load-btn');
 					const nextBtn = document.getElementById('next-btn');
 					const openBtn = document.getElementById('open-btn');
@@ -931,6 +960,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 					if (effectiveOriginalUrl) {
 						input.value = effectiveOriginalUrl;
+						clearBtn.style.display = 'block';
 					}
 					
 					if (effectiveUrl && effectiveUrl !== 'about:blank') {
@@ -950,6 +980,16 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 							const url = input.value;
 							if (url) { loadVideo(url); }
 						}
+					});
+
+					input.addEventListener('input', () => {
+						clearBtn.style.display = input.value ? 'block' : 'none';
+					});
+
+					clearBtn.addEventListener('click', () => {
+						input.value = '';
+						clearBtn.style.display = 'none';
+						input.focus();
 					});
 
 					loadBtn.addEventListener('click', () => {
@@ -1074,6 +1114,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 								}
 								
 								input.value = message.originalUrl || message.value;
+								clearBtn.style.display = input.value ? 'block' : 'none';
 								currentVideoId = nextId;
 								lastLoadedUrl = message.value;
 								
