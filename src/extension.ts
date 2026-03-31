@@ -232,13 +232,19 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private async _handleLoadRequest(url: string): Promise<void> {
+		// Save immediately to avoid race conditions
+		await this._saveUrl(url);
+		
 		const title = await this._resolveTitle(url);
-		await this._saveUrl(url, title);
+		
+		if (title) {
+			await this._saveUrl(url, title);
+		}
 	}
 
 	private _getHistory(): HistoryEntry[] {
 		const raw = this._state.get<unknown[]>(YouTubeViewProvider.historyKey, []);
-		return raw
+		const history = raw
 			.map((item): HistoryEntry | null => {
 				if (typeof item === 'string') {
 					return { url: item };
@@ -255,6 +261,8 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				return null;
 			})
 			.filter((entry): entry is HistoryEntry => Boolean(entry));
+		
+		return history;
 	}
 
 	private async _resolveTitle(url: string): Promise<string | undefined> {
@@ -354,7 +362,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			initialOriginalUrl = last.url;
 		}
 
-		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl.replace(/"/g, '&quot;'));
+		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl);
 	}
 
 	private _getHtmlForWebview(initialUrl: string = 'about:blank', initialOriginalUrl: string = '') {
@@ -602,10 +610,10 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				</div>
 
 				<script>
-					const initialUrl = "${initialUrl}";
-					const initialOriginalUrl = "${initialOriginalUrl}";
-
 					const vscode = acquireVsCodeApi();
+					
+					const initialUrl = ${JSON.stringify(initialUrl)};
+					const initialOriginalUrl = ${JSON.stringify(initialOriginalUrl)};
 					const input = document.getElementById('url-input');
 					const loadBtn = document.getElementById('load-btn');
 					const nextBtn = document.getElementById('next-btn');
@@ -628,15 +636,55 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						saveState();
 					});
 
+					let lastLoadedUrl = initialUrl;
+					let lastLoadedOriginalUrl = initialOriginalUrl;
+
 					function saveState() {
 						vscode.setState({ 
-							autoplay: autoplayCheck.checked
+							autoplay: autoplayCheck.checked,
+							currentUrl: lastLoadedUrl,
+							currentOriginalUrl: input.value
 						});
 					}
 
-					if (initialOriginalUrl) {
-						input.value = initialOriginalUrl;
+					
+					// Priority: 1. vscode.getState(), 2. initialUrl from extension
+					const savedState = vscode.getState();
+					let effectiveUrl = (savedState && savedState.currentUrl && savedState.currentUrl !== 'about:blank') 
+						? savedState.currentUrl 
+						: initialUrl;
+					const effectiveOriginalUrl = (savedState && savedState.currentOriginalUrl) 
+						? savedState.currentOriginalUrl 
+						: initialOriginalUrl;
+
+					// FIX: If the proxy port changed since last save, update it to the current one
+					if (effectiveUrl.includes('127.0.0.1') && initialUrl.includes('127.0.0.1')) {
+						try {
+							const currentPort = new URL(initialUrl).port;
+							const savedPort = new URL(effectiveUrl).port;
+							if (currentPort && savedPort && currentPort !== savedPort) {
+								effectiveUrl = effectiveUrl.replace('127.0.0.1:' + savedPort, '127.0.0.1:' + currentPort);
+							}
+						} catch (e) {
+							// Ignored
+						}
+					}
+
+					lastLoadedUrl = effectiveUrl;
+					lastLoadedOriginalUrl = effectiveOriginalUrl;
+
+					if (effectiveOriginalUrl) {
+						input.value = effectiveOriginalUrl;
+					}
+					
+					if (effectiveUrl && effectiveUrl !== 'about:blank') {
+						iframe.src = effectiveUrl;
+						emptyState.style.display = 'none';
 						statusText.textContent = 'Loading...';
+					} else {
+						iframe.src = 'about:blank';
+						emptyState.style.display = 'flex';
+						statusText.textContent = 'Ready';
 					}
 
 					vscode.postMessage({ type: 'webviewReady' });
@@ -747,6 +795,8 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 								
 								input.value = message.originalUrl || message.value;
 								currentVideoId = nextId;
+								lastLoadedUrl = message.value;
+								saveState();
 								
 								emptyState.style.display = 'none';
 								isPaused = false;
@@ -762,6 +812,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 								requestNext(true);
 								break;
 						}
+						saveState();
 					});
 
 					function requestNext(force = false) {
@@ -812,7 +863,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 								event: 'command',
 								func: command
 							}, '*');
-							// isPaused will be updated by the state change message
+						// isPaused will be updated by the state change message
 						}
 					}
 				</script>
