@@ -29,8 +29,16 @@ function getProxyEmbedHtml(videoId: string, startTime: number = 0, autoplay: boo
         let s = ${startTime};
         let a = ${autoplay ? 1 : 0};
         let ready = false;
+
+        function proxyLog(level, msg, ...args) {
+            if (level !== 'error') return; // ONLY ERRORS
+            console[level](msg, ...args);
+            window.parent.postMessage({ type: 'proxyLog', level, message: msg, args }, '*');
+        }
+
         
         window.onYouTubeIframeAPIReady = function() {
+            let initialV = v;
             try {
                 p = new YT.Player('p', {
                     height: '100%', width: '100%', videoId: v,
@@ -39,21 +47,37 @@ function getProxyEmbedHtml(videoId: string, startTime: number = 0, autoplay: boo
                         onReady: e => { 
                             ready = true;
                             window.parent.postMessage({type:'playerReady', videoId: v}, '*');
-                            if(v && a) e.target.playVideo(); 
-                            // Report time every second
+                            
+                            if (v !== initialV) {
+                                if (a) e.target.loadVideoById({ videoId: v, startSeconds: s });
+                                else e.target.cueVideoById({ videoId: v, startSeconds: s });
+                            } else if (v && a) {
+                                e.target.playVideo(); 
+                            }
+                            
+                            // Report time and ACTUAL video ID every second
                             setInterval(() => {
-                                if (p && p.getCurrentTime) {
+                                if (p && p.getCurrentTime && p.getVideoData) {
                                     const time = p.getCurrentTime();
-                                    window.parent.postMessage({event:'timeUpdate', time: Math.floor(time)}, '*');
+                                    const actualId = p.getVideoData().video_id;
+                                    window.parent.postMessage({event:'timeUpdate', time: Math.floor(time), videoId: v, actualVideoId: actualId}, '*');
                                 }
                             }, 1000);
                         },
+
                         onStateChange: e => { 
-                            window.parent.postMessage({event:'infoDelivery',info:{playerState:e.data}}, '*'); 
+                            window.parent.postMessage({event:'infoDelivery',info:{playerState:e.data}, videoId: v}, '*'); 
+                        },
+
+
+                        onError: e => {
+                            proxyLog('error', '[YOUTUBE_EXT][PROXY] Player Error:', e.data);
                         }
                     }
                 });
-            } catch (err) {}
+            } catch (err) {
+                proxyLog('error', '[YOUTUBE_EXT][PROXY] Error initializing YT.Player:', err);
+            }
         };
 
         if (window.YT && window.YT.Player) {
@@ -74,27 +98,32 @@ function getProxyEmbedHtml(videoId: string, startTime: number = 0, autoplay: boo
                 s = nextStartTime;
                 a = nextAutoplay;
 
-                if (ready && p && p.loadVideoById) {
-                    if (a) {
-                        p.loadVideoById({ videoId: v, startSeconds: s });
-                    } else {
-                        p.cueVideoById({ videoId: v, startSeconds: s });
+                if (p && p.loadVideoById) {
+                    try {
+                        if (a) {
+                            p.loadVideoById({ videoId: v, startSeconds: s });
+                            p.playVideo();
+                        } else {
+                            p.cueVideoById({ videoId: v, startSeconds: s });
+                        }
+                    } catch (err) {
+                        proxyLog('error', '[YOUTUBE_EXT][PROXY] Error during loadVideoById:', err);
                     }
-                } else if (p && !ready) {
-                    // Player exists but not quite ready, it will use the updated v, s, a if possible
-                    // or we can wait for onReady. The onReady handler already uses v and a.
-                } else if (!p) {
-                    // constructor hasn't run yet, it will use updated v, s, a
                 }
             } else if (data.event === 'command' && p && p[data.func]) {
                 if (ready) p[data.func]();
             }
         });
+
+
+
+
     </script>
     <script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>`;
 }
+
 
 async function startProxyServer(): Promise<void> {
 	if (proxyServer && proxyPort) {
@@ -238,6 +267,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	}
  
 	public loadUrl(url: string, startTime?: number, autoplay: boolean = true) {
+
 		const target = this.activePanel?.webview || this._view?.webview;
 		if (target) {
 			void this._handleLoadRequest(url);
@@ -255,15 +285,21 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				startTime = this._getTimestamp(url);
 			}
 
+			const formattedUrl = this._formatYoutubeUrl(url, startTime, autoplay);
+
 			target.postMessage({
 				type: 'loadUrl',
-				value: this._formatYoutubeUrl(url, startTime, autoplay),
+				value: formattedUrl,
 				originalUrl: url,
 				startTime: startTime,
 				autoplay: autoplay
 			});
+		} else {
+			console.log(`[YOUTUBE_EXT][EXT] No target webview found`);
 		}
 	}
+
+
 
 	public _formatYoutubeUrl(url: string, startTime: number = 0, autoplay: boolean = true): string {
 		const toEmbed = (id: string): string => {
@@ -322,7 +358,6 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	public async _handleLoadRequest(url: string): Promise<void> {
-		// Save immediately to avoid race conditions
 		await this._saveUrl(url);
 		
 		const title = await this._resolveTitle(url);
@@ -330,7 +365,6 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		if (title) {
 			await this._saveUrl(url, title);
 			
-			// Update favorites if it exists there too
 			const favorites = this._getFavorites();
 			const index = favorites.findIndex(f => f.url === url);
 			if (index !== -1 && !favorites[index].title) {
@@ -347,6 +381,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	private async _saveFavorite(url: string, title?: string): Promise<void> {
 		const normalized = url.trim();
+
 		if (!normalized) return;
 
 		const favorites = this._getFavorites();
@@ -400,13 +435,10 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 		const timestamps = this._state.get<Record<string, number>>(YouTubeViewProvider.timestampsKey, {});
 		
-		// If time is close to end (e.g. within 5 sec of end), we might want to reset? 
-		// For now simple save.
-		if (Math.abs((timestamps[videoId] || 0) - time) < 1) return; // Don't save if it's the same second
+		if (Math.abs((timestamps[videoId] || 0) - time) < 1) return;
 
 		timestamps[videoId] = time;
 		
-		// Keep storage lean - maybe limit to 100 recent videos
 		const keys = Object.keys(timestamps);
 		if (keys.length > 100) {
 			delete timestamps[keys[0]];
@@ -426,7 +458,6 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				if (parsed.pathname.startsWith('/embed/')) return parsed.pathname.split('/').filter(Boolean)[1];
 			}
 		} catch {
-			// Fallback for non-url strings that might be IDs
 			if (/^[a-zA-Z0-9_-]{11}$/.test(urlStr)) return urlStr;
 		}
 		return undefined;
@@ -467,7 +498,6 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			
 			const results: {id: string, title: string, thumbnail: string}[] = [];
 			
-			// Try to parse ytInitialData
 			const match = text.match(/var ytInitialData = (.*?);<\/script>/);
 			if (match) {
 				try {
@@ -488,12 +518,10 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						}
 					}
 				} catch (e) {
-					// Fallback
 				}
 			}
 			
 			if (results.length === 0) {
-				// Fallback to simple regex if JSON parsing fails
 				const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"\}\]/g);
 				for (const m of matches) {
 					results.push({
@@ -517,22 +545,18 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			return '';
 		}
 
-		// Already a full URL
 		if (/^https?:\/\//i.test(trimmed)) {
 			return trimmed;
 		}
 
-		// YouTube ID
 		if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
 			return `https://www.youtube.com/watch?v=${trimmed}`;
 		}
 
-		// Likely a domain name without protocol
 		if (trimmed.includes('.') && !trimmed.includes(' ') && trimmed.length > 3) {
 			return 'https://' + trimmed;
 		}
 
-		// Treat as search query
 		const results = await this._searchVideos(trimmed);
 		if (results.length > 0) {
 			return `https://www.youtube.com/watch?v=${results[0]}`;
@@ -618,19 +642,16 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl);
 		
-		// Load the last timestamp if we have a last video
 		if (last) {
 			const timestamp = this._getTimestamp(last.url);
 			if (timestamp > 0) {
-				// We don't want to auto-load/seek here immediately because the webview might not be ready
-				// but script.js handles it via its own state or by asking for it.
-				// Actually, script.js uses INITIAL_URL_JSON which we should update to include the timestamp if possible.
 			}
 		}
 	}
 
 	private _getHtmlForWebview(initialUrl: string = 'about:blank', initialOriginalUrl: string = '') {
 		try {
+
 			const webviewPath = path.join(this._extensionUri.fsPath, 'src', 'webview');
 			let html = fs.readFileSync(path.join(webviewPath, 'index.html'), 'utf8');
 			const style = fs.readFileSync(path.join(webviewPath, 'style.css'), 'utf8');
@@ -640,7 +661,9 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 			script = script
 				.replace('%%INITIAL_URL_JSON%%', JSON.stringify(initialUrl))
-				.replace('%%INITIAL_ORIGINAL_URL_JSON%%', JSON.stringify(initialOriginalUrl));
+				.replace('%%INITIAL_ORIGINAL_URL_JSON%%', JSON.stringify(initialOriginalUrl))
+				.replace('%%PROXY_PORT_JSON%%', JSON.stringify(proxyPort));
+
 
 			html = html
 				.replace('%%CSP%%', csp)
@@ -658,7 +681,13 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	private _setupWebviewHandlers(webview: vscode.Webview, isPanel: boolean) {
 		webview.onDidReceiveMessage(async data => {
 			switch (data.type) {
+
+				case 'log':
+					console.log(`[YOUTUBE_EXT][WEBVIEW] ${data.message}`, ...(data.args || []));
+					break;
+
 				case 'timeUpdate':
+
 					if (isPanel) {
 						this._lastPanelTime = data.time;
 					} else {
@@ -670,6 +699,11 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						void this._saveTimestamp(data.url, data.time);
 					}
 					break;
+
+				case 'proxyLog':
+					console.log(`[YOUTUBE_EXT][PROXY][${data.level}] ${data.message}`, ...(data.args || []));
+					break;
+
 				case 'requestLoad':
 					if (isPanel) {
 						this._lastPanelUrl = data.value;
@@ -692,14 +726,17 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						}
 						void this._handleLoadRequest(resolvedUrl);
 						const startTime = this._getTimestamp(resolvedUrl);
+						const formattedUrl = this._formatYoutubeUrl(resolvedUrl, startTime);
 						webview.postMessage({
 							type: 'loadUrl',
-							value: this._formatYoutubeUrl(resolvedUrl, startTime),
+							value: formattedUrl,
 							originalUrl: data.value,
 							startTime: startTime
 						});
 					}
 					break;
+
+
 				case 'requestHistory':
 					webview.postMessage({ type: 'history', value: this._getHistory() });
 					break;

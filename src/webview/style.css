@@ -159,6 +159,24 @@ button:hover {
     border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.favorite-item, .history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.favorite-item:hover, .history-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.favorite-item:active, .history-item:active {
+    background: rgba(255, 255, 255, 0.2);
+}
+
 #fav-current-btn:hover, #next-btn:hover, #open-btn:hover {
 	color: #fff;
     background: rgba(255, 255, 255, 0.15);
