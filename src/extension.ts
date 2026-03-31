@@ -14,30 +14,47 @@ function getProxyEmbedHtml(videoId: string): string {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <style>body,html,#p{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;}</style>
+    <style>body,html,#p{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;}</style>
 </head>
 <body>
     <div id="p"></div>
-    <script src="https://www.youtube.com/iframe_api"></script>
     <script>
         let p;
         let v = '${videoId}';
-        function onYouTubeIframeAPIReady() {
-            p = new YT.Player('p', {
-                height: '100%', width: '100%', videoId: v,
-                playerVars: { autoplay: 1, rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1 },
-                events: {
-                    onReady: e => { if(v) e.target.playVideo(); },
-                    onStateChange: e => { window.parent.postMessage({event:'infoDelivery',info:{playerState:e.data}}, '*'); }
-                }
-            });
+        
+        window.onYouTubeIframeAPIReady = function() {
+            try {
+                p = new YT.Player('p', {
+                    height: '100%', width: '100%', videoId: v,
+                    playerVars: { autoplay: 1, rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1 },
+                    events: {
+                        onReady: e => { 
+                            if(v) e.target.playVideo(); 
+                        },
+                        onStateChange: e => { 
+                            window.parent.postMessage({event:'infoDelivery',info:{playerState:e.data}}, '*'); 
+                        }
+                    }
+                });
+            } catch (err) {}
+        };
+
+        if (window.YT && window.YT.Player) {
+            window.onYouTubeIframeAPIReady();
         }
+    </script>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script>
         window.addEventListener('message', e => {
-            if (e.data.type === 'load') {
-                v = e.data.id;
+            let data = e.data;
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch(err) { return; }
+            }
+            if (data.type === 'load') {
+                v = data.id;
                 if (p && p.loadVideoById) p.loadVideoById(v);
-            } else if (e.data.event === 'command' && p && p[e.data.func]) {
-                p[e.data.func]();
+            } else if (data.event === 'command' && p && p[data.func]) {
+                p[data.func]();
             }
         });
     </script>
@@ -52,6 +69,7 @@ async function startProxyServer(): Promise<void> {
 
 	proxyServer = http.createServer((req, res) => {
 		const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+		
 		if (url.pathname !== '/embed') {
 			res.writeHead(404);
 			res.end('Not Found');
@@ -296,19 +314,9 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			localResourceRoots: [this._extensionUri]
 		};
 
-		webviewView.webview.html = this._getHtmlForWebview();
-
 		webviewView.webview.onDidReceiveMessage(async data => {
 			switch (data.type) {
 				case 'webviewReady': {
-					const last = this._getHistory()[0];
-					if (last) {
-						this._view?.webview.postMessage({
-							type: 'loadUrl',
-							value: this._formatYoutubeUrl(last.url),
-							originalUrl: last.url
-						});
-					}
 					break;
 				}
 				case 'requestLoad':
@@ -337,9 +345,19 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					break;
 			}
 		});
+
+		const last = this._getHistory()[0];
+		let initialUrl = 'about:blank';
+		let initialOriginalUrl = '';
+		if (last) {
+			initialUrl = this._formatYoutubeUrl(last.url);
+			initialOriginalUrl = last.url;
+		}
+
+		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl.replace(/"/g, '&quot;'));
 	}
 
-	private _getHtmlForWebview() {
+	private _getHtmlForWebview(initialUrl: string = 'about:blank', initialOriginalUrl: string = '') {
 		return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
@@ -575,15 +593,18 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					<div id="history-dropdown" class="history-dropdown"></div>
 				</div>
 				<div class="player-container">
-					<div id="empty-state">
+					<div id="empty-state" style="${initialUrl !== 'about:blank' ? 'display:none' : ''}">
 						<svg viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg>
 						Paste a YouTube URL to start watching.<br/>
 						<span style="font-size:11px; margin-top:8px; opacity:0.6;">Tip: Use Continuous Play to keep the music going.</span>
 					</div>
-					<iframe id="video-frame" src="about:blank" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowfullscreen></iframe>
+					<iframe id="video-frame" src="${initialUrl}" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowfullscreen></iframe>
 				</div>
 
 				<script>
+					const initialUrl = "${initialUrl}";
+					const initialOriginalUrl = "${initialOriginalUrl}";
+
 					const vscode = acquireVsCodeApi();
 					const input = document.getElementById('url-input');
 					const loadBtn = document.getElementById('load-btn');
@@ -596,10 +617,10 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					const autoplayCheck = document.getElementById('autoplay-check');
 					const statusText = document.getElementById('status-text');
 
-					let currentVideoId = '';
+					let currentVideoId = extractVideoId(initialUrl);
 					let isPaused = false;
 
-					// Load saved autoplay settings
+					// Load saved settings
 					const state = vscode.getState() || { autoplay: true };
 					autoplayCheck.checked = state.autoplay;
 
@@ -611,6 +632,11 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						vscode.setState({ 
 							autoplay: autoplayCheck.checked
 						});
+					}
+
+					if (initialOriginalUrl) {
+						input.value = initialOriginalUrl;
+						statusText.textContent = 'Loading...';
 					}
 
 					vscode.postMessage({ type: 'webviewReady' });
@@ -640,7 +666,11 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 					historyBtn.addEventListener('click', (e) => {
 						e.stopPropagation();
-						vscode.postMessage({ type: 'requestHistory' });
+						if (historyDropdown.classList.contains('visible')) {
+							historyDropdown.classList.remove('visible');
+						} else {
+							vscode.postMessage({ type: 'requestHistory' });
+						}
 					});
 
 					document.addEventListener('click', () => {
@@ -656,6 +686,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 						currentVideoId = extractVideoId(normalized);
 						vscode.postMessage({ type: 'requestLoad', value: normalized });
+						
 						emptyState.style.display = 'none';
 						historyDropdown.classList.remove('visible');
 						statusText.textContent = 'Loading...';
@@ -686,18 +717,21 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						const message = event.data;
 						
 						// Handle YouTube IFrame API messages
-						if (typeof message === 'string') {
-							// Sometimes messages are JSON strings
-							if (message.includes('playerState')) {
-								try {
-									const data = JSON.parse(message);
-									if (data.event === 'infoDelivery' && data.info && data.info.playerState === 0) {
-										requestNext();
-									}
-								} catch(e) {}
+						let data = message;
+						if (typeof data === 'string') {
+							try { data = JSON.parse(data); } catch(e) { return; }
+						}
+
+						if (data && data.event === 'infoDelivery' && data.info) {
+							if (data.info.playerState === 0) {
+								requestNext();
+							} else if (data.info.playerState === 1) {
+								isPaused = false;
+								statusText.textContent = 'Playing';
+							} else if (data.info.playerState === 2) {
+								isPaused = true;
+								statusText.textContent = 'Paused';
 							}
-						} else if (message && message.event === 'infoDelivery' && message.info && message.info.playerState === 0) {
-							requestNext();
 						}
 
 						switch (message.type) {
@@ -706,7 +740,6 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 								const proxyUrlPrefix = message.value.split('/embed')[0] + '/embed';
 								
 								if (iframe.src.startsWith(proxyUrlPrefix)) {
-									// If already on proxy, just load video without reload
 									iframe.contentWindow.postMessage({ type: 'load', id: nextId }, '*');
 								} else {
 									iframe.src = message.value;
@@ -714,6 +747,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 								
 								input.value = message.originalUrl || message.value;
 								currentVideoId = nextId;
+								
 								emptyState.style.display = 'none';
 								isPaused = false;
 								statusText.textContent = 'Playing';
@@ -774,12 +808,11 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					function togglePlay() {
 						const command = isPaused ? 'playVideo' : 'pauseVideo';
 						if (iframe && iframe.contentWindow) {
-							iframe.contentWindow.postMessage(JSON.stringify({
+							iframe.contentWindow.postMessage({
 								event: 'command',
 								func: command
-							}), '*');
-							isPaused = !isPaused;
-							statusText.textContent = isPaused ? 'Paused' : 'Playing';
+							}, '*');
+							// isPaused will be updated by the state change message
 						}
 					}
 				</script>
