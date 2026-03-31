@@ -435,7 +435,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						position: absolute;
 						top: 0;
 						left: 0;
-						right: 0;
+						width: 320px;
 						height: 60px;
 						z-index: 999;
 					}
@@ -444,15 +444,17 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						position: absolute;
 						top: 0;
 						left: 0;
-						right: 0;
+						width: 320px;
 						display: flex;
 						flex-direction: column;
-						padding: 8px 12px;
+						padding: 8px 20px 8px 12px;
 						background: var(--header-bg);
 						backdrop-filter: blur(12px);
 						border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+						border-right: 1px solid rgba(255, 255, 255, 0.1);
+						border-bottom-right-radius: 12px;
 						z-index: 1000;
-						transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+						transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 						transform: translateY(-100%);
 						opacity: 0;
 						box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
