@@ -144,11 +144,12 @@ export async function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('youtube-panel.loadUrl', async () => {
 			const url = await vscode.window.showInputBox({
-				prompt: "Enter YouTube Video URL",
-				placeHolder: "https://www.youtube.com/watch?v=..."
+				prompt: "Enter YouTube Video URL or Search query",
+				placeHolder: "https://www.youtube.com/watch?v=... or 'lofi hip hop'"
 			});
 			if (url) {
-				provider.loadUrl(url);
+				const resolvedUrl = await provider.resolveUrl(url);
+				provider.loadUrl(resolvedUrl);
 			}
 		})
 	);
@@ -332,15 +333,85 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private async _searchVideos(query: string): Promise<string[]> {
+	private async _searchVideos(query: string): Promise<{id: string, title: string, thumbnail: string}[]> {
 		try {
 			const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`);
 			const text = await res.text();
-			const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g);
-			return [...new Set(Array.from(matches).map(m => m[1]))];
+			
+			const results: {id: string, title: string, thumbnail: string}[] = [];
+			
+			// Try to parse ytInitialData
+			const match = text.match(/var ytInitialData = (.*?);<\/script>/);
+			if (match) {
+				try {
+					const data = JSON.parse(match[1]);
+					const contents = data.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents;
+					for (const content of contents) {
+						if (content.itemSectionRenderer) {
+							for (const item of content.itemSectionRenderer.contents) {
+								if (item.videoRenderer) {
+									const v = item.videoRenderer;
+									results.push({
+										id: v.videoId,
+										title: v.title.runs[0].text,
+										thumbnail: v.thumbnail.thumbnails[0].url
+									});
+								}
+							}
+						}
+					}
+				} catch (e) {
+					// Fallback
+				}
+			}
+			
+			if (results.length === 0) {
+				// Fallback to simple regex if JSON parsing fails
+				const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"\}\]/g);
+				for (const m of matches) {
+					results.push({
+						id: m[1],
+						title: m[2].replace(/\\u0026/g, '&'),
+						thumbnail: `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg`
+					});
+					if (results.length >= 20) break;
+				}
+			}
+			
+			return results;
 		} catch {
 			return [];
 		}
+	}
+
+	public async resolveUrl(input: string): Promise<string> {
+		const trimmed = input.trim();
+		if (!trimmed) {
+			return '';
+		}
+
+		// Already a full URL
+		if (/^https?:\/\//i.test(trimmed)) {
+			return trimmed;
+		}
+
+		// YouTube ID
+		if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+			return `https://www.youtube.com/watch?v=${trimmed}`;
+		}
+
+		// Likely a domain name without protocol
+		if (trimmed.includes('.') && !trimmed.includes(' ') && trimmed.length > 3) {
+			return 'https://' + trimmed;
+		}
+
+		// Treat as search query
+		const results = await this._searchVideos(trimmed);
+		if (results.length > 0) {
+			return `https://www.youtube.com/watch?v=${results[0]}`;
+		}
+
+		return trimmed;
 	}
 
 	public async _findNextVideo(currentId: string): Promise<string | undefined> {
@@ -377,13 +448,25 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			} else if (data.type === 'requestLoad') {
 				lastKnownUrl = data.value;
 				lastKnownTime = 0;
-				void sidebarProvider._handleLoadRequest(data.value);
-				panel.webview.postMessage({
-					type: 'loadUrl',
-					value: provider._formatYoutubeUrl(data.value),
-					originalUrl: data.value,
-					startTime: 0
-				});
+				
+				const trimmed = data.value.trim();
+				const isSearch = trimmed.includes(' ') || (!trimmed.includes('.') && !trimmed.startsWith('http') && !/^[a-zA-Z0-9_-]{11}$/.test(trimmed));
+				
+				if (isSearch) {
+					provider._searchVideos(trimmed).then(results => {
+						panel.webview.postMessage({ type: 'searchResults', results });
+					});
+				} else {
+					provider.resolveUrl(data.value).then(resolvedUrl => {
+						void sidebarProvider._handleLoadRequest(resolvedUrl);
+						panel.webview.postMessage({
+							type: 'loadUrl',
+							value: provider._formatYoutubeUrl(resolvedUrl),
+							originalUrl: data.value,
+							startTime: 0
+						});
+					});
+				}
 			} else if (data.type === 'requestHistory') {
 				panel.webview.postMessage({ type: 'history', value: sidebarProvider._getHistory() });
 			} else if (data.type === 'requestNextVideo') {
@@ -430,12 +513,21 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					break;
 				}
 				case 'requestLoad':
-					void this._handleLoadRequest(data.value);
-					this._view?.webview.postMessage({
-						type: 'loadUrl',
-						value: this._formatYoutubeUrl(data.value),
-						originalUrl: data.value
-					});
+					const trimmedInput = data.value.trim();
+					const isSearch = trimmedInput.includes(' ') || (!trimmedInput.includes('.') && !trimmedInput.startsWith('http') && !/^[a-zA-Z0-9_-]{11}$/.test(trimmedInput));
+					
+					if (isSearch) {
+						const results = await this._searchVideos(trimmedInput);
+						this._view?.webview.postMessage({ type: 'searchResults', results });
+					} else {
+						const resolvedUrl = await this.resolveUrl(data.value);
+						void this._handleLoadRequest(resolvedUrl);
+						this._view?.webview.postMessage({
+							type: 'loadUrl',
+							value: this._formatYoutubeUrl(resolvedUrl),
+							originalUrl: data.value
+						});
+					}
 					break;
 				case 'urlSelected':
 					void this._saveUrl(data.value);
@@ -682,6 +774,63 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						margin-bottom: 16px;
 						fill: #333;
 					}
+
+					.results-container {
+						display: none;
+						position: absolute;
+						inset: 0;
+						background: #000;
+						z-index: 100;
+						overflow-y: auto;
+						padding: 12px;
+						flex-direction: column;
+						gap: 12px;
+					}
+
+					.search-result {
+						display: flex;
+						gap: 12px;
+						padding: 8px;
+						background: #111;
+						border-radius: 8px;
+						cursor: pointer;
+						transition: all 0.2s;
+						border: 1px solid rgba(255, 255, 255, 0.05);
+					}
+
+					.search-result:hover {
+						background: #222;
+						border-color: var(--accent-color);
+						transform: translateX(4px);
+					}
+
+					.result-thumb {
+						width: 120px;
+						height: 68px;
+						border-radius: 4px;
+						background-size: cover;
+						background-position: center;
+						flex-shrink: 0;
+						box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+					}
+
+					.result-info {
+						display: flex;
+						flex-direction: column;
+						justify-content: center;
+						overflow: hidden;
+					}
+
+					.result-title {
+						font-size: 13px;
+						font-weight: 500;
+						color: #eee;
+						display: -webkit-box;
+						-webkit-line-clamp: 2;
+						-webkit-box-orient: vertical;
+						overflow: hidden;
+						line-height: 1.3;
+					}
 				</style>
 			</head>
 			<body>
@@ -706,6 +855,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					<div id="history-dropdown" class="history-dropdown"></div>
 				</div>
 				<div class="player-container">
+					<div id="results-container" class="results-container"></div>
 					<div id="empty-state" style="${initialUrl !== 'about:blank' ? 'display:none' : ''}">
 						<svg viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg>
 						Paste a YouTube URL to start watching.<br/>
@@ -727,6 +877,7 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					const historyDropdown = document.getElementById('history-dropdown');
 					const iframe = document.getElementById('video-frame');
 					const emptyState = document.getElementById('empty-state');
+					const resultsContainer = document.getElementById('results-container');
 					const autoplayCheck = document.getElementById('autoplay-check');
 					const statusText = document.getElementById('status-text');
 
@@ -836,18 +987,28 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					});
 
 					function loadVideo(url) {
-						const normalized = normalizeInput(url);
+						let normalized = url.trim();
 						if (!normalized) {
-							statusText.textContent = 'Invalid URL';
+							statusText.textContent = 'Invalid Input';
 							return;
+						}
+
+						const isSearch = normalized.includes(' ') || (!normalized.includes('.') && !normalized.startsWith('http') && !/^[a-zA-Z0-9_-]{11}$/.test(normalized));
+						
+						if (isSearch) {
+							statusText.textContent = 'Searching...';
+						} else {
+							normalized = normalizeInput(normalized);
+							statusText.textContent = 'Loading...';
 						}
 
 						currentVideoId = extractVideoId(normalized);
 						vscode.postMessage({ type: 'requestLoad', value: normalized });
 						
+						resultsContainer.style.display = 'none';
+						iframe.style.display = 'block';
 						emptyState.style.display = 'none';
 						historyDropdown.classList.remove('visible');
-						statusText.textContent = 'Loading...';
 					}
 
 					function extractVideoId(url) {
@@ -929,6 +1090,9 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 								isPaused = !startAutoplay;
 								statusText.textContent = isPaused ? 'Paused' : 'Playing';
 								break;
+							case 'searchResults':
+								showSearchResults(message.results);
+								break;
 							case 'history':
 								showHistory(message.value);
 								break;
@@ -957,10 +1121,42 @@ class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						}
 					}
 
+					function showSearchResults(results) {
+						resultsContainer.innerHTML = '';
+						if (results.length === 0) {
+							resultsContainer.innerHTML = '<div style="color:#777; text-align:center; padding-top:40px;">No results found</div>';
+						} else {
+							results.forEach(res => {
+								const div = document.createElement('div');
+								div.className = 'search-result';
+								div.innerHTML = \`
+									<div class="result-thumb" style="background-image: url('\${res.thumbnail}')"></div>
+									<div class="result-info">
+										<div class="result-title">\${res.title}</div>
+									</div>
+								\`;
+								div.addEventListener('click', () => {
+									loadVideo(\`https://www.youtube.com/watch?v=\${res.id}\`);
+								});
+								resultsContainer.appendChild(div);
+							});
+						}
+						resultsContainer.style.display = 'flex';
+						iframe.style.display = 'none';
+						emptyState.style.display = 'none';
+						statusText.textContent = 'Search results';
+					}
+
 					function normalizeInput(url) {
 						const trimmed = url.trim();
 						if (!trimmed) return '';
 						if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+						
+						// If it looks like a search query (contains spaces or no dot), return as is
+						if (trimmed.includes(' ') || !trimmed.includes('.')) {
+							return trimmed;
+						}
+						
 						return 'https://' + trimmed;
 					}
 
