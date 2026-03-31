@@ -12,12 +12,13 @@
 	<div class="top-hitbox"></div>
 	<div class="header">
 		<div class="input-row">
+			<button id="favorites-btn" title="Favorites">⭐</button>
 			<button id="history-btn" title="Recent History">🕒</button>
 			<div class="input-container">
 				<input type="text" id="url-input" placeholder="Paste YouTube URL here...">
 				<button id="clear-btn" class="clear-btn" title="Clear">✕</button>
 			</div>
-			<button id="load-btn">Go</button>
+			<button id="fav-current-btn" title="Add current to Favorites">★</button>
 			<button id="next-btn" title="Next (Similar/Popular/Random)">⏭</button>
 			<button id="open-btn" title="Open in VS Code Tab">📺</button>
 		</div>
@@ -30,7 +31,8 @@
 			</div>
 			<div id="status-text">Ready</div>
 		</div>
-		<div id="history-dropdown" class="history-dropdown"></div>
+		<div id="history-dropdown" class="history-dropdown dropdown"></div>
+		<div id="favorites-dropdown" class="favorites-dropdown dropdown"></div>
 	</div>
 	<div class="player-container">
 		<div id="results-container" class="results-container"></div>

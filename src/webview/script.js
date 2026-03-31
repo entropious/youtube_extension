@@ -4,16 +4,20 @@ const initialUrl = %%INITIAL_URL_JSON%%;
 const initialOriginalUrl = %%INITIAL_ORIGINAL_URL_JSON%%;
 const input = document.getElementById('url-input');
 const clearBtn = document.getElementById('clear-btn');
-const loadBtn = document.getElementById('load-btn');
 const nextBtn = document.getElementById('next-btn');
 const openBtn = document.getElementById('open-btn');
 const historyBtn = document.getElementById('history-btn');
 const historyDropdown = document.getElementById('history-dropdown');
+const favoritesBtn = document.getElementById('favorites-btn');
+const favoritesDropdown = document.getElementById('favorites-dropdown');
+const favCurrentBtn = document.getElementById('fav-current-btn');
 const iframe = document.getElementById('video-frame');
 const emptyState = document.getElementById('empty-state');
 const resultsContainer = document.getElementById('results-container');
 const autoplayCheck = document.getElementById('autoplay-check');
 const statusText = document.getElementById('status-text');
+
+let favorites = [];
 
 let currentVideoId = extractVideoId(initialUrl);
 let isPaused = false;
@@ -79,6 +83,7 @@ if (effectiveUrl && effectiveUrl !== 'about:blank') {
 }
 
 vscode.postMessage({ type: 'webviewReady' });
+vscode.postMessage({ type: 'requestFavorites' });
 
 input.addEventListener('keydown', (e) => {
 	if (e.key === 'Enter') {
@@ -97,10 +102,6 @@ clearBtn.addEventListener('click', () => {
 	input.focus();
 });
 
-loadBtn.addEventListener('click', () => {
-	const url = input.value;
-	if (url) { loadVideo(url); }
-});
 
 nextBtn.addEventListener('click', () => {
 	requestNext(true);
@@ -120,6 +121,7 @@ openBtn.addEventListener('click', () => {
 
 historyBtn.addEventListener('click', (e) => {
 	e.stopPropagation();
+	favoritesDropdown.classList.remove('visible');
 	if (historyDropdown.classList.contains('visible')) {
 		historyDropdown.classList.remove('visible');
 	} else {
@@ -127,8 +129,34 @@ historyBtn.addEventListener('click', (e) => {
 	}
 });
 
+favoritesBtn.addEventListener('click', (e) => {
+	e.stopPropagation();
+	historyDropdown.classList.remove('visible');
+	if (favoritesDropdown.classList.contains('visible')) {
+		favoritesDropdown.classList.remove('visible');
+	} else {
+		vscode.postMessage({ type: 'requestFavorites' });
+	}
+});
+
+favCurrentBtn.addEventListener('click', () => {
+    if (!currentVideoId) return;
+    
+    const currentlyFavorited = isFavorited(lastLoadedOriginalUrl);
+    if (currentlyFavorited) {
+        vscode.postMessage({ type: 'removeFavorite', url: lastLoadedOriginalUrl });
+    } else {
+        vscode.postMessage({ 
+            type: 'addFavorite', 
+            url: lastLoadedOriginalUrl, 
+            title: statusText.textContent === 'Playing' || statusText.textContent === 'Paused' ? undefined : statusText.textContent 
+        });
+    }
+});
+
 document.addEventListener('click', () => {
 	historyDropdown.classList.remove('visible');
+	favoritesDropdown.classList.remove('visible');
 });
 
 function loadVideo(url) {
@@ -154,6 +182,9 @@ function loadVideo(url) {
 	iframe.style.display = 'block';
 	emptyState.style.display = 'none';
 	historyDropdown.classList.remove('visible');
+	favoritesDropdown.classList.remove('visible');
+	
+	updateFavoriteButton();
 }
 
 function extractVideoId(url) {
@@ -222,6 +253,7 @@ window.addEventListener('message', event => {
 			clearBtn.style.display = input.value ? 'block' : 'none';
 			currentVideoId = nextId;
 			lastLoadedUrl = message.value;
+			lastLoadedOriginalUrl = message.originalUrl || message.value;
 			
 			// Only reset time if it's a new video or if it's not a resume-from-pause event
 			if (startTime === 0) {
@@ -235,12 +267,19 @@ window.addEventListener('message', event => {
 			emptyState.style.display = 'none';
 			isPaused = !startAutoplay;
 			statusText.textContent = isPaused ? 'Paused' : 'Playing';
+			
+			updateFavoriteButton();
 			break;
 		case 'searchResults':
 			showSearchResults(message.results);
 			break;
 		case 'history':
 			showHistory(message.value);
+			break;
+		case 'favorites':
+			favorites = message.value;
+			showFavorites(favorites);
+			updateFavoriteButton();
 			break;
 		case 'togglePlay':
 			togglePlay();
@@ -317,15 +356,76 @@ function showHistory(urls) {
 		urls.forEach(entry => {
 			const item = document.createElement('div');
 			item.className = 'history-item';
-			item.textContent = entry.title || entry.url;
-			item.title = entry.url;
-			item.addEventListener('click', () => {
+			
+			const text = document.createElement('div');
+			text.className = 'item-text';
+			text.textContent = entry.title || entry.url;
+			text.title = entry.url;
+			text.addEventListener('click', () => {
 				loadVideo(entry.url);
 			});
+			
+			item.appendChild(text);
 			historyDropdown.appendChild(item);
 		});
 	}
 	historyDropdown.classList.add('visible');
+}
+
+function showFavorites(urls) {
+	favoritesDropdown.innerHTML = '';
+	if (urls.length === 0) {
+		const item = document.createElement('div');
+		item.className = 'favorite-item';
+		item.textContent = 'No favorites yet';
+		favoritesDropdown.appendChild(item);
+	} else {
+		urls.forEach(entry => {
+			const item = document.createElement('div');
+			item.className = 'favorite-item';
+			
+			const text = document.createElement('div');
+			text.className = 'item-text';
+			text.textContent = entry.title || entry.url;
+			text.title = entry.url;
+			text.addEventListener('click', () => {
+				loadVideo(entry.url);
+			});
+
+			const remove = document.createElement('button');
+			remove.className = 'remove-btn';
+			remove.textContent = 'Remove';
+			remove.addEventListener('click', (e) => {
+				e.stopPropagation();
+				vscode.postMessage({ type: 'removeFavorite', url: entry.url });
+			});
+			
+			item.appendChild(text);
+			item.appendChild(remove);
+			favoritesDropdown.appendChild(item);
+		});
+	}
+	favoritesDropdown.classList.add('visible');
+}
+
+function isFavorited(url) {
+    if (!url) return false;
+    return favorites.some(f => f.url === url);
+}
+
+function updateFavoriteButton() {
+    if (!currentVideoId) {
+        favCurrentBtn.style.display = 'none';
+        return;
+    }
+    favCurrentBtn.style.display = 'block';
+    if (isFavorited(lastLoadedOriginalUrl)) {
+        favCurrentBtn.classList.add('active');
+        favCurrentBtn.title = 'Remove from Favorites';
+    } else {
+        favCurrentBtn.classList.remove('active');
+        favCurrentBtn.title = 'Add to Favorites';
+    }
 }
 
 function togglePlay() {
