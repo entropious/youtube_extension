@@ -2,7 +2,7 @@
   "name": "youtube-panel",
   "displayName": "YouTube Player",
   "description": "The ultimate YouTube companion for VS Code. Watch, listen, and learn while you code—seamlessly.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "entro",
   "license": "MIT",
   "engines": {
