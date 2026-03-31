@@ -1,7 +1,7 @@
 {
   "name": "youtube-panel",
-  "displayName": "YouTube Panel",
-  "description": "Seamlessly watch YouTube directly in VS Code – tutorials, music, and streams without context switching.",
+  "displayName": "YouTube Player",
+  "description": "The ultimate YouTube companion for VS Code. Watch, listen, and learn while you code—seamlessly.",
   "version": "0.1.0",
   "publisher": "entro",
   "license": "MIT",
@@ -43,6 +43,11 @@
       ]
     },
     "commands": [
+      {
+        "command": "youtube-panel.loadUrl",
+        "title": "YouTube: Load URL",
+        "category": "YouTube"
+      },
       {
         "command": "youtube-panel.togglePlay",
         "title": "YouTube: Play/Pause",
