@@ -7,10 +7,12 @@ import * as sinon from 'sinon';
 export class MockMemento {
     data: Record<string, any> = {};
     get<T>(key: string, defaultValue?: T): T {
-        return this.data[key] !== undefined ? this.data[key] : (defaultValue as T);
+        const val = this.data[key] !== undefined ? this.data[key] : defaultValue;
+        if (val === undefined) return defaultValue as T;
+        return (val && typeof val === 'object') ? JSON.parse(JSON.stringify(val)) : val;
     }
     async update(key: string, value: any): Promise<void> {
-        this.data[key] = value;
+        this.data[key] = (value && typeof value === 'object') ? JSON.parse(JSON.stringify(value)) : value;
     }
 }
 

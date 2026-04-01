@@ -333,7 +333,7 @@ window.addEventListener('message', event => {
 
 		
 		// Inform extension host (memory only, for visibility change triggers)
-		vscode.postMessage({ type: 'timeUpdate', time: lastCurrentTime });
+		vscode.postMessage({ type: 'timeUpdate', time: lastCurrentTime, url: lastLoadedOriginalUrl });
 		
 		// VS Code state (for panel hide/show) - can be updated frequently as it's memory-mapped
 		saveState();
@@ -456,6 +456,10 @@ window.addEventListener('message', event => {
 			favorites = message.value;
 			showFavorites(favorites);
 			updateFavoriteButton();
+			break;
+		case 'autoplayUpdated':
+			autoplayCheck.checked = !!message.value;
+			saveState();
 			break;
 
 

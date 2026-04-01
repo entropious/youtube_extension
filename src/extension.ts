@@ -5,7 +5,6 @@ import { YouTubeViewProvider } from './provider';
 let proxyServer: http.Server | null = null;
 let proxyPort = 0;
 
-// при переключении видео сбрасывается timstampe
 // кнопка очистки истории
 // при клике на урлбар выделять весть урл
 
