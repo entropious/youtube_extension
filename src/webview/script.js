@@ -534,6 +534,24 @@ function showHistory(urls) {
 		item.textContent = 'No history yet';
 		historyDropdown.appendChild(item);
 	} else {
+		// Add "Clear All" button at the top
+		const header = document.createElement('div');
+		header.className = 'dropdown-header';
+		
+		const title = document.createElement('span');
+		title.textContent = 'Recent History';
+		header.appendChild(title);
+
+		const clearAll = document.createElement('button');
+		clearAll.className = 'clear-all-btn';
+		clearAll.textContent = 'Clear All';
+		clearAll.addEventListener('click', (e) => {
+			e.stopPropagation();
+			vscode.postMessage({ type: 'clearHistory' });
+		});
+		header.appendChild(clearAll);
+		historyDropdown.appendChild(header);
+
 		urls.forEach(entry => {
 			const item = document.createElement('div');
 			item.className = 'history-item';
