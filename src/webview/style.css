@@ -254,6 +254,37 @@ select {
 	justify-content: space-between;
 }
 
+.dropdown-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 10px 14px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	background: rgba(255, 255, 255, 0.05);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	font-weight: 700;
+	color: rgba(255, 255, 255, 0.5);
+}
+
+.clear-all-btn {
+	background: transparent;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	color: rgba(255, 255, 255, 0.6);
+	padding: 2px 8px;
+	font-size: 9px;
+	border-radius: 4px;
+	cursor: pointer;
+	transition: all 0.2s;
+}
+
+.clear-all-btn:hover {
+	background: rgba(255, 0, 0, 0.2);
+	border-color: rgba(255, 0, 0, 0.3);
+	color: #fff;
+}
+
 .item-text {
 	flex-grow: 1;
 	overflow: hidden;

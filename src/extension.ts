@@ -5,7 +5,6 @@ import { YouTubeViewProvider } from './provider';
 let proxyServer: http.Server | null = null;
 let proxyPort = 0;
 
-// кнопка очистки истории
 // при клике на урлбар выделять весть урл
 
 function getProxyEmbedHtml(videoId: string, startTime = 0, autoplay = true): string {

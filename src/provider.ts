@@ -156,6 +156,16 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		return parseEntries(raw);
 	}
 
+	private async _removeHistory(url: string): Promise<void> {
+		const history = this._getHistory();
+		const filtered = history.filter(h => h.url !== url);
+		await this._state.update(YouTubeViewProvider.historyKey, filtered);
+	}
+
+	private async _clearHistory(): Promise<void> {
+		await this._state.update(YouTubeViewProvider.historyKey, []);
+	}
+
 	private _getTimestamp(url: string): number {
 		const videoId = this._extractVideoId(url);
 		if (!videoId) return 0;
@@ -400,6 +410,14 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'removeFavorite': 
 					await this._removeFavorite(data.url); 
 					this.postToAll({ type: 'favorites', value: this._getFavorites() }); 
+					break;
+				case 'removeHistory':
+					await this._removeHistory(data.url);
+					this.postToAll({ type: 'history', value: this._getHistory() });
+					break;
+				case 'clearHistory':
+					await this._clearHistory();
+					this.postToAll({ type: 'history', value: [] });
 					break;
 				case 'requestNextVideo': {
 					const nextId = await this._findNextVideo(data.videoId);
