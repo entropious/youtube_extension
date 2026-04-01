@@ -323,8 +323,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 		panel.onDidDispose(() => {
 			if (this._tabPanel === panel) this._tabPanel = undefined;
-			void this._saveTimestamp(this._lastUrl || url, this._lastTime);
-			this.loadUrl(this._lastUrl || url, this._lastTime, false, 'sidebar');
+			if (this._isTabActive) {
+				void this._saveTimestamp(this._lastUrl || url, this._lastTime);
+				this.loadUrl(this._lastUrl || url, this._lastTime, false, 'sidebar');
+			}
 		});
 	}
 
