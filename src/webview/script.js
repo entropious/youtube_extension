@@ -238,18 +238,9 @@ favCurrentBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('click', () => {
-    vscode.postMessage({ type: 'active' });
 	historyDropdown.classList.remove('visible');
 	favoritesDropdown.classList.remove('visible');
 });
-
-window.addEventListener('focus', () => {
-    vscode.postMessage({ type: 'active' });
-});
-
-window.onclick = function() {
-    vscode.postMessage({ type: 'active' });
-};
 
 
 
