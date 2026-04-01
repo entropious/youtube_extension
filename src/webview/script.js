@@ -29,6 +29,7 @@ window.addEventListener('unhandledrejection', function(event) {
 const initialUrl = %%INITIAL_URL_JSON%%;
 const initialOriginalUrl = %%INITIAL_ORIGINAL_URL_JSON%%;
 const currentProxyPort = %%PROXY_PORT_JSON%%;
+const initialAutoplaySetting = %%AUTOPLAY_JSON%%;
 
 const input = document.getElementById('url-input');
 const clearBtn = document.getElementById('clear-btn');
@@ -54,14 +55,14 @@ let pendingIframeLoad = null;
 
 // Load saved settings
 const savedState = vscode.getState() || {};
-if (savedState.autoplay === undefined) savedState.autoplay = true;
-autoplayCheck.checked = !!savedState.autoplay;
+autoplayCheck.checked = initialAutoplaySetting;
 
 let lastCurrentTime = 0;
 let lastGlobalSaveTime = 0;
 let lastRetryTime = 0;
 
 autoplayCheck.addEventListener('change', () => {
+    vscode.postMessage({ type: 'setAutoplay', value: autoplayCheck.checked });
 	saveState();
 });
 
@@ -369,6 +370,10 @@ window.addEventListener('message', event => {
 				url: lastLoadedOriginalUrl, 
 				time: Math.floor(lastCurrentTime) 
 			});
+		} else if (newState === 0) { // ENDED
+			isPaused = true;
+			statusText.textContent = 'Ended';
+			vscode.postMessage({ type: 'videoEnded', videoId: currentVideoId });
 		}
 	}
 
@@ -468,14 +473,13 @@ window.addEventListener('message', event => {
 });
 
 function requestNext(force = false) {
-	if ((autoplayCheck.checked || force) && currentVideoId) {
+	if (currentVideoId) {
 		statusText.textContent = 'Finding next...';
 		vscode.postMessage({ 
 			type: 'requestNextVideo', 
-			videoId: currentVideoId
+			videoId: currentVideoId,
+			manual: !!force
 		});
-	} else {
-		statusText.textContent = 'Ended';
 	}
 }
 

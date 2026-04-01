@@ -9,6 +9,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public static readonly historyKey = 'youtube-history';
 	public static readonly favoritesKey = 'youtube-favorites';
 	public static readonly timestampsKey = 'youtube-timestamps';
+	public static readonly autoplayKey = 'youtube-autoplay';
 
 	private _view?: vscode.WebviewView;
 	public activePanel?: vscode.WebviewPanel;
@@ -303,7 +304,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			script = script
 				.replace('%%INITIAL_URL_JSON%%', JSON.stringify(initialUrl))
 				.replace('%%INITIAL_ORIGINAL_URL_JSON%%', JSON.stringify(initialOriginalUrl))
-				.replace('%%PROXY_PORT_JSON%%', JSON.stringify(this._getProxyPort()));
+				.replace('%%PROXY_PORT_JSON%%', JSON.stringify(this._getProxyPort()))
+				.replace('%%AUTOPLAY_JSON%%', JSON.stringify(this._getAutoplay()));
 
 			return html
 				.replace('%%CSP%%', "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-src http://127.0.0.1:* https://www.youtube.com https://youtube.com;")
@@ -353,13 +355,41 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						const nextUrl = `https://www.youtube.com/watch?v=${nextId}`;
 						if (isPanel) { this._lastPanelUrl = nextUrl; this._lastPanelTime = 0; } else { this._lastViewUrl = nextUrl; this._lastViewTime = 0; }
 						void this._handleLoadRequest(nextUrl);
-						webview.postMessage({ type: 'loadUrl', value: this._formatYoutubeUrl(nextUrl), originalUrl: nextUrl, startTime: 0 });
+						
+						// If manual request, always autoplay. If automatic (from video end), check the flag.
+						const shouldAutoplay = data.manual !== false || this._getAutoplay();
+						
+						const startTime = 0;
+						webview.postMessage({ 
+							type: 'loadUrl', 
+							value: this._formatYoutubeUrl(nextUrl, startTime, shouldAutoplay), 
+							originalUrl: nextUrl, 
+							startTime,
+							autoplay: shouldAutoplay
+						});
 					}
 					break;
 				}
+				case 'videoEnded': {
+					if (this._getAutoplay()) {
+						const nextId = await this._findNextVideo(data.videoId);
+						if (nextId) {
+							const nextUrl = `https://www.youtube.com/watch?v=${nextId}`;
+							if (isPanel) { this._lastPanelUrl = nextUrl; this._lastPanelTime = 0; } else { this._lastViewUrl = nextUrl; this._lastViewTime = 0; }
+							void this._handleLoadRequest(nextUrl);
+							webview.postMessage({ type: 'loadUrl', value: this._formatYoutubeUrl(nextUrl, 0, true), originalUrl: nextUrl, startTime: 0, autoplay: true });
+						}
+					}
+					break;
+				}
+				case 'setAutoplay': await this._state.update(YouTubeViewProvider.autoplayKey, !!data.value); break;
 				case 'openExternal': if (isPanel) this.loadUrl(data.url, data.time); else { this.pause(); this.openInPanel(data.url, data.title, data.time); } break;
 				case 'urlSelected': void this._saveUrl(data.value); break;
 			}
 		});
+	}
+
+	private _getAutoplay(): boolean {
+		return this._state.get<boolean>(YouTubeViewProvider.autoplayKey, true);
 	}
 }
