@@ -30,29 +30,14 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private postToActive(message: any) {
-		const tabActive = this._tabPanel?.active;
-		const tabVisible = this._tabPanel?.visible;
-		const sidebarVisible = this._sidebarView?.visible;
-
 		let target: vscode.WebviewPanel | vscode.WebviewView | undefined;
 
-		if (tabActive) {
+		if (this._isTabActive && this._tabPanel) {
 			target = this._tabPanel;
-		} else if (tabVisible && !sidebarVisible) {
-			target = this._tabPanel;
-		} else if (sidebarVisible && !tabVisible) {
+		} else {
 			target = this._sidebarView;
-		} else {
-			// Both visible or both hidden, use the last active flag (is active one a tab or sidebar?)
-			target = this._isTabActive ? this._tabPanel : this._sidebarView;
-			if (!target) target = this._isTabActive ? this._sidebarView : this._tabPanel;
 		}
-
-		if (target) {
-			target.webview.postMessage(message);
-		} else {
-			this.postToAll(message);
-		}
+		target?.webview.postMessage(message);
 	}
 
 	public togglePlay() {
@@ -341,16 +326,6 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			void this._saveTimestamp(this._lastUrl || url, this._lastTime);
 			this.loadUrl(this._lastUrl || url, this._lastTime, false, 'sidebar');
 		});
-
-		panel.onDidChangeViewState(() => {
-			if (panel.active) this._isTabActive = true;
-			if (!panel.visible && this._lastUrl) {
-				const url = this._lastUrl;
-				const time = this._lastTime;
-				void this._saveTimestamp(url, time);
-				if (this._sidebarView) this.loadUrl(url, time, false, 'sidebar');
-			}
-		});
 	}
 
 	public resolveWebviewView(webviewView: vscode.WebviewView, _context: vscode.WebviewViewResolveContext, _token: vscode.CancellationToken) {
@@ -413,7 +388,6 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			switch (data.type) {
 				case 'log': console.log(`[YOUTUBE_EXT][WEBVIEW] ${data.message}`, ...(data.args || [])); break;
 				case 'active':
-					this._isTabActive = isTab;
 					break;
 				case 'playbackStatus':
 					if (data.status === 'playing') {
