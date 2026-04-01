@@ -171,6 +171,10 @@ clearBtn.addEventListener('click', () => {
 	input.focus();
 });
 
+input.addEventListener('click', () => {
+	input.select();
+});
+
 
 nextBtn.addEventListener('click', () => {
 	requestNext(true);
