@@ -238,9 +238,18 @@ favCurrentBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('click', () => {
+    vscode.postMessage({ type: 'active' });
 	historyDropdown.classList.remove('visible');
 	favoritesDropdown.classList.remove('visible');
 });
+
+window.addEventListener('focus', () => {
+    vscode.postMessage({ type: 'active' });
+});
+
+window.onclick = function() {
+    vscode.postMessage({ type: 'active' });
+};
 
 
 
@@ -365,9 +374,11 @@ window.addEventListener('message', event => {
 		if (newState === 1) { // PLAYING
 			isPaused = false;
 			statusText.textContent = 'Playing';
+			vscode.postMessage({ type: 'playbackStatus', status: 'playing' });
 		} else if (newState === 2) { // PAUSED
 			isPaused = true;
 			statusText.textContent = 'Paused';
+			vscode.postMessage({ type: 'playbackStatus', status: 'paused' });
 			// Save immediately on pause
 			vscode.postMessage({ 
 				type: 'saveTimestamp', 
