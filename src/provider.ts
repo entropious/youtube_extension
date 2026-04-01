@@ -387,8 +387,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		webview.onDidReceiveMessage(async data => {
 			switch (data.type) {
 				case 'log': console.log(`[YOUTUBE_EXT][WEBVIEW] ${data.message}`, ...(data.args || [])); break;
-				case 'active':
-					break;
+
 				case 'playbackStatus':
 					if (data.status === 'playing') {
 						this._isTabActive = isTab;
