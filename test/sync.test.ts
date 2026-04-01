@@ -41,21 +41,21 @@ describe('YouTubeViewProvider Synchronization', () => {
         
         // Verify state is kept
         expect(provider.activePanel).to.equal(panel);
-        expect(provider._lastPanelUrl).to.equal(videoUrl);
-        expect(provider._lastPanelTime).to.equal(10);
+        expect(provider._lastUrl).to.equal(videoUrl);
+        expect(provider._lastTime).to.equal(10);
 
         // Update time via message to webview
         const messageHandler = webview.onDidReceiveMessage.getCall(0).args[0];
         await messageHandler({ type: 'timeUpdate', time: 150 });
-        expect(provider._lastPanelTime).to.equal(150);
+        expect(provider._lastTime).to.equal(150);
 
         // Dispose the panel (simulate user closing tab)
         const disposeHandler = panel.onDidDispose.getCall(0).args[0];
         disposeHandler();
 
         // Verify it was saved to memento (timestampKey for 'dQw4w9WgXcQ')
-        const timestamps = memento.get<Record<string, number>>(YouTubeViewProvider.timestampsKey, {});
-        expect(timestamps['dQw4w9WgXcQ']).to.equal(150);
+        const timestamps = memento.get<Record<string, any>>(YouTubeViewProvider.timestampsKey, {});
+        expect(timestamps['dQw4w9WgXcQ'].time).to.equal(150);
         
         // Verify activePanel was cleared
         expect(provider.activePanel).to.be.undefined;
@@ -76,7 +76,7 @@ describe('YouTubeViewProvider Synchronization', () => {
 
         // Verify that the HTML contains the correct start time (from initialUrl)
         expect(webview.html).to.contain('start=123');
-        expect(provider._lastViewTime).to.equal(123);
+        expect(provider._lastTime).to.equal(123);
     });
 
     it('should synchronize time between tab and sidebar on hide', async () => {
@@ -104,7 +104,7 @@ describe('YouTubeViewProvider Synchronization', () => {
         viewStateHandler();
 
         // 5. Verify sidebar state was updated in memory
-        expect(provider._lastViewTime).to.equal(200);
+        expect(provider._lastTime).to.equal(200);
         
         // 6. Verify sidebar was told to seek if it was visible
         (sidebar as any).visible = true; 
