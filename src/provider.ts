@@ -11,9 +11,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public static readonly timestampsKey = 'youtube-timestamps';
 	public static readonly autoplayKey = 'youtube-autoplay';
 
-	private _view?: vscode.WebviewView;
-	public activePanel?: vscode.WebviewPanel;
-	private _isPanelActive = false;
+	private _sidebarView?: vscode.WebviewView;
+	public _tabPanel?: vscode.WebviewPanel;
+	private _isTabActive = false;
 	public _lastUrl?: string;
 	public _lastTime = 0;
 	private _timestampCache: Record<string, number> = {};
@@ -25,22 +25,47 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	) { }
 
 	private postToAll(message: any) {
-		if (this.activePanel) this.activePanel.webview.postMessage(message);
-		if (this._view) this._view.webview.postMessage(message);
+		if (this._tabPanel) this._tabPanel.webview.postMessage(message);
+		if (this._sidebarView) this._sidebarView.webview.postMessage(message);
 	}
 
 	private postToActive(message: any) {
-		const target = this._isPanelActive ? this.activePanel : this._view;
+		const tabActive = this._tabPanel?.active;
+		const tabVisible = this._tabPanel?.visible;
+		const sidebarVisible = this._sidebarView?.visible;
+
+		let target: vscode.WebviewPanel | vscode.WebviewView | undefined;
+
+		if (tabActive) {
+			target = this._tabPanel;
+		} else if (tabVisible && !sidebarVisible) {
+			target = this._tabPanel;
+		} else if (sidebarVisible && !tabVisible) {
+			target = this._sidebarView;
+		} else {
+			// Both visible or both hidden, use the last active flag (is active one a tab or sidebar?)
+			target = this._isTabActive ? this._tabPanel : this._sidebarView;
+			if (!target) target = this._isTabActive ? this._sidebarView : this._tabPanel;
+		}
+
 		if (target) {
 			target.webview.postMessage(message);
 		} else {
-			// Fallback to whatever is available if the "active" one is gone
 			this.postToAll(message);
 		}
 	}
 
 	public togglePlay() {
 		this.postToActive({ type: 'togglePlay' });
+	}
+
+	public pauseAllExcept(exceptTab: boolean) {
+		const message = { type: 'pause' };
+		if (exceptTab) {
+			if (this._sidebarView) this._sidebarView.webview.postMessage(message);
+		} else {
+			if (this._tabPanel) this._tabPanel.webview.postMessage(message);
+		}
 	}
 
 	public pause() {
@@ -57,7 +82,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
  
-	public async loadUrl(url: string, startTime?: number, autoplay = true): Promise<void> {
+	public async loadUrl(url: string, startTime?: number, autoplay = true, targetView?: 'tab' | 'sidebar'): Promise<void> {
 		const savePromise = this.saveCurrentState();
 		void this._handleLoadRequest(url);
 
@@ -74,10 +99,16 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			value: formattedUrl,
 			originalUrl: url,
 			startTime: startTime,
-			autoplay: autoplay
+			autoplay: autoplay,
+			targetView: targetView
 		};
-
-		this.postToAll(message);
+		if (targetView === 'tab' && this._tabPanel) {
+			this._tabPanel.webview.postMessage(message);
+		} else if (targetView === 'sidebar' && this._sidebarView) {
+			this._sidebarView.webview.postMessage(message);
+		} else {
+			this.postToActive(message);
+		}
 		await savePromise;
 	}
 
@@ -85,8 +116,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		return formatYoutubeUrl(url, startTime, autoplay, this._getProxyPort());
 	}
 
-	private async _loadUrlTargeted(webview: vscode.Webview, isPanel: boolean, url: string, startTime?: number, autoplay = true) {
-		this._isPanelActive = isPanel;
+	private async _loadUrlTargeted(webview: vscode.Webview, isTab: boolean, url: string, startTime?: number, autoplay = true) {
+		this._isTabActive = isTab;
 		if (this._lastUrl) await this._saveTimestamp(this._lastUrl, this._lastTime, true);
 		
 		this._lastUrl = url;
@@ -290,49 +321,52 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	public openInPanel(url: string, title?: string, startTime?: number) {
-		if (this.activePanel) {
-			this.activePanel.reveal(vscode.ViewColumn.One);
-			this.activePanel.title = title || 'YouTube Player';
-			this.loadUrl(url, startTime);
+		this._isTabActive = true;
+		if (this._tabPanel) {
+			this._tabPanel.reveal(vscode.ViewColumn.One);
+			this._tabPanel.title = title || 'YouTube Player';
+			this.loadUrl(url, startTime, true, 'tab');
 			return;
 		}
 
 		const panel = vscode.window.createWebviewPanel('youtube-player', title || 'YouTube Player', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
-		this.activePanel = panel;
+		this._tabPanel = panel;
 		this._lastUrl = url;
 		this._lastTime = startTime || 0;
 		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime), url);
 		this._setupWebviewHandlers(panel.webview, true);
 
 		panel.onDidDispose(() => {
-			if (this.activePanel === panel) this.activePanel = undefined;
+			if (this._tabPanel === panel) this._tabPanel = undefined;
 			void this._saveTimestamp(this._lastUrl || url, this._lastTime);
-			this.loadUrl(this._lastUrl || url, this._lastTime, false);
+			this.loadUrl(this._lastUrl || url, this._lastTime, false, 'sidebar');
 		});
 
 		panel.onDidChangeViewState(() => {
+			if (panel.active) this._isTabActive = true;
 			if (!panel.visible && this._lastUrl) {
 				const url = this._lastUrl;
 				const time = this._lastTime;
 				void this._saveTimestamp(url, time);
-				if (this._view) this.loadUrl(url, time, false);
+				if (this._sidebarView) this.loadUrl(url, time, false, 'sidebar');
 			}
 		});
 	}
 
 	public resolveWebviewView(webviewView: vscode.WebviewView, _context: vscode.WebviewViewResolveContext, _token: vscode.CancellationToken) {
-		this._view = webviewView;
+		this._sidebarView = webviewView;
 		webviewView.webview.options = { enableScripts: true, localResourceRoots: [this._extensionUri] };
 		this._setupWebviewHandlers(webviewView.webview, false);
 
 		webviewView.onDidChangeVisibility(() => {
+			if (webviewView.visible) this._isTabActive = false;
 			const url = this._lastUrl;
 			const time = this._lastTime;
 			if (webviewView.visible && url) {
-				this.loadUrl(url, time, false);
+				this.loadUrl(url, time, false, 'sidebar');
 			} else if (!webviewView.visible && url) {
 				void this._saveTimestamp(url, time);
-				if (this.activePanel) this.loadUrl(url, time, false);
+				if (this._tabPanel) this.loadUrl(url, time, false, 'tab');
 			}
 		});
 
@@ -341,7 +375,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		const lastUrl = this._lastUrl || this._getHistory()[0]?.url;
 		if (lastUrl) {
 			const startTime = this._lastTime || this._getTimestamp(lastUrl);
-			initialUrl = this._formatYoutubeUrl(lastUrl, startTime);
+			// Sidebar (view) should NEVER autoplay on initial restore/load
+			initialUrl = this._formatYoutubeUrl(lastUrl, startTime, false);
 			initialOriginalUrl = lastUrl;
 			this._lastUrl = lastUrl;
 			this._lastTime = startTime;
@@ -373,13 +408,21 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private _setupWebviewHandlers(webview: vscode.Webview, isPanel: boolean) {
+	private _setupWebviewHandlers(webview: vscode.Webview, isTab: boolean) {
 		webview.onDidReceiveMessage(async data => {
 			switch (data.type) {
 				case 'log': console.log(`[YOUTUBE_EXT][WEBVIEW] ${data.message}`, ...(data.args || [])); break;
+				case 'active':
+					this._isTabActive = isTab;
+					break;
+				case 'playbackStatus':
+					if (data.status === 'playing') {
+						this._isTabActive = isTab;
+						this.pauseAllExcept(isTab);
+					}
+					break;
 				case 'timeUpdate': {
 					if (data.url && data.url !== this._lastUrl) return; // Drop updates from old videos
-					this._isPanelActive = isPanel;
 					this._lastTime = data.time;
 					const vid = this._extractVideoId(this._lastUrl || '');
 					if (vid) this._timestampCache[vid] = data.time;
@@ -397,12 +440,16 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						webview.postMessage({ type: 'searchResults', results });
 					} else {
 						const resolvedUrl = await this.resolveUrl(data.value);
-						await this._loadUrlTargeted(webview, isPanel, resolvedUrl);
+						await this._loadUrlTargeted(webview, isTab, resolvedUrl);
 					}
 					break;
 				}
-				case 'requestHistory': webview.postMessage({ type: 'history', value: this._getHistory() }); break;
-				case 'requestFavorites': webview.postMessage({ type: 'favorites', value: this._getFavorites() }); break;
+				case 'requestHistory': 
+					webview.postMessage({ type: 'history', value: this._getHistory() }); 
+					break;
+				case 'requestFavorites': 
+					webview.postMessage({ type: 'favorites', value: this._getFavorites() }); 
+					break;
 				case 'addFavorite': 
 					await this._saveFavorite(data.url, data.title); 
 					this.postToAll({ type: 'favorites', value: this._getFavorites() }); 
@@ -424,7 +471,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					if (nextId) {
 						const nextUrl = `https://www.youtube.com/watch?v=${nextId}`;
 						const shouldAutoplay = data.manual !== false || this._getAutoplay();
-						await this._loadUrlTargeted(webview, isPanel, nextUrl, 0, shouldAutoplay);
+						await this._loadUrlTargeted(webview, isTab, nextUrl, 0, shouldAutoplay);
 					}
 					break;
 				}
@@ -433,13 +480,13 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						const nextId = await this._findNextVideo(data.videoId);
 						if (nextId) {
 							const nextUrl = `https://www.youtube.com/watch?v=${nextId}`;
-							await this._loadUrlTargeted(webview, isPanel, nextUrl, 0, true);
+							await this._loadUrlTargeted(webview, isTab, nextUrl, 0, true);
 						}
 					}
 					break;
 				}
 				case 'setAutoplay': await this._state.update(YouTubeViewProvider.autoplayKey, !!data.value); this.postToAll({ type: 'autoplayUpdated', value: !!data.value }); break;
-				case 'openExternal': if (isPanel) this.loadUrl(data.url, data.time); else { this.pause(); this.openInPanel(data.url, data.title, data.time); } break;
+				case 'openExternal': if (isTab) this.loadUrl(data.url, data.time, true, 'tab'); else { this.pause(); this.openInPanel(data.url, data.title, data.time); } break;
 				case 'urlSelected': void this._saveUrl(data.value); break;
 			}
 		});

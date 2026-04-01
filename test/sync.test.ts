@@ -40,7 +40,7 @@ describe('YouTubeViewProvider Synchronization', () => {
         provider.openInPanel(videoUrl, 'Test Video', 10);
         
         // Verify state is kept
-        expect(provider.activePanel).to.equal(panel);
+        expect(provider._tabPanel).to.equal(panel);
         expect(provider._lastUrl).to.equal(videoUrl);
         expect(provider._lastTime).to.equal(10);
 
@@ -58,7 +58,7 @@ describe('YouTubeViewProvider Synchronization', () => {
         expect(timestamps['dQw4w9WgXcQ'].time).to.equal(150);
         
         // Verify activePanel was cleared
-        expect(provider.activePanel).to.be.undefined;
+        expect(provider._tabPanel).to.be.undefined;
     });
 
     it('should restore time correctly when a new view is resolved', async () => {
@@ -114,5 +114,6 @@ describe('YouTubeViewProvider Synchronization', () => {
         const lastCall = sidebarWebview.postMessage.lastCall;
         expect(lastCall.args[0].type).to.equal('loadUrl');
         expect(lastCall.args[0].startTime).to.equal(200);
+        expect(lastCall.args[0].targetView).to.equal('sidebar');
     });
 });
