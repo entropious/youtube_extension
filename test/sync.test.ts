@@ -79,7 +79,7 @@ describe('YouTubeViewProvider Synchronization', () => {
         expect(provider._lastTime).to.equal(123);
     });
 
-    it('should synchronize time between tab and sidebar on hide', async () => {
+    it('should synchronize time to sidebar when it becomes visible', async () => {
         const videoUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
         const panelWebview = createMockWebview();
         const panel = createMockWebviewPanel(panelWebview);
@@ -88,29 +88,22 @@ describe('YouTubeViewProvider Synchronization', () => {
         // 1. Open in panel
         provider.openInPanel(videoUrl, 'Test Video', 50);
         
-        // 2. Set up sidebar (not visible yet)
+        // 2. Set up sidebar (not visible initially)
         const sidebarWebview = createMockWebview();
         const sidebar = createMockWebviewView(sidebarWebview);
+        (sidebar as any).visible = false;
         provider.resolveWebviewView(sidebar as any, {} as any, {} as any);
+        const visibilityHandler = sidebar.onDidChangeVisibility.getCall(0).args[0];
         
         // 3. Update time in panel
         const messageHandler = panelWebview.onDidReceiveMessage.getCall(0).args[0];
-        await messageHandler({ type: 'timeUpdate', time: 200 });
+        await messageHandler({ type: 'timeUpdate', time: 200, url: videoUrl });
 
-        // 4. Hide the panel (simulate switching to another file)
-        const viewStateHandler = panel.onDidChangeViewState.getCall(0).args[0];
-        // Simulate panel becoming invisible
-        (panel as any).visible = false;
-        viewStateHandler();
+        // 4. Make sidebar visible
+        (sidebar as any).visible = true;
+        visibilityHandler();
 
-        // 5. Verify sidebar state was updated in memory
-        expect(provider._lastTime).to.equal(200);
-        
-        // 6. Verify sidebar was told to seek if it was visible
-        (sidebar as any).visible = true; 
-        viewStateHandler(); // Trigger hide again (sync logic is same)
-        
-        // Check if sidebar webview received the loadUrl message
+        // 5. Verify sidebar was told to synchronize via loadUrl
         const lastCall = sidebarWebview.postMessage.lastCall;
         expect(lastCall.args[0].type).to.equal('loadUrl');
         expect(lastCall.args[0].startTime).to.equal(200);

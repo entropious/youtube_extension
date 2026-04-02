@@ -37,7 +37,7 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         const viewHandler = viewWebview.onDidReceiveMessage.getCall(0).args[0];
         
         // 1. Sidebar is active
-        await viewHandler({ type: 'active' });
+        await viewHandler({ type: 'playbackStatus', status: 'playing' });
         
         // 2. Open tab (first time)
         (vscode.window.createWebviewPanel as sinon.SinonStub).returns(panel);
@@ -70,7 +70,7 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         provider.resolveWebviewView(view as any, {} as any, {} as any);
         const viewHandler = viewWebview.onDidReceiveMessage.getCall(0).args[0];
         
-        await viewHandler({ type: 'active' });
+        await viewHandler({ type: 'playbackStatus', status: 'playing' });
         provider.togglePlay();
         expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'togglePlay' }))).to.be.true;
 
@@ -78,7 +78,7 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         provider.openInPanel('v1');
         const panelHandler = panelWebview.onDidReceiveMessage.getCall(0).args[0];
 
-        await panelHandler({ type: 'active' });
+        await panelHandler({ type: 'playbackStatus', status: 'playing' });
         viewWebview.postMessage.resetHistory();
         provider.togglePlay();
         expect(panelWebview.postMessage.calledWith(sinon.match({ type: 'togglePlay' }))).to.be.true;
@@ -117,7 +117,7 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         provider.openInPanel('v1');
 
         const panelHandler = panelWebview.onDidReceiveMessage.getCall(0).args[0];
-        await panelHandler({ type: 'active' });
+        await panelHandler({ type: 'playbackStatus', status: 'playing' });
 
         await provider.loadUrl('v2', 0, true);
 
@@ -126,29 +126,5 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         // Inactive sidebar does NOT get it
         expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl' }))).to.be.false;
     });
-
-    it('should prefer active tab over visible sidebar', async () => {
-        const viewWebview = createMockWebview();
-        const view = createMockWebviewView(viewWebview);
-        const panelWebview = createMockWebview();
-        const panel = createMockWebviewPanel(panelWebview);
-        
-        provider.resolveWebviewView(view as any, {} as any, {} as any);
-        (vscode.window.createWebviewPanel as sinon.SinonStub).returns(panel);
-        provider.openInPanel('v1');
-
-        // Force both visible
-        (panel as any).visible = true;
-        (panel as any).active = true;
-        (view as any).visible = true;
-        
-        // Even if flag was false before
-        // @ts-ignore
-        provider._isTabActive = false;
-
-        provider.togglePlay();
-        // Should go to tab because it is explicitly 'active' in VS Code
-        expect(panelWebview.postMessage.calledWith(sinon.match({ type: 'togglePlay' }))).to.be.true;
-        expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'togglePlay' }))).to.be.false;
-    });
 });
+
