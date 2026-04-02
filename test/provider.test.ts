@@ -126,5 +126,31 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         // Inactive sidebar does NOT get it
         expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl' }))).to.be.false;
     });
+
+    it('should correctly initialize restored (deserialized) panels', async () => {
+        const panelWebview = createMockWebview();
+        const panel = createMockWebviewPanel(panelWebview);
+        
+        const videoUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+        
+        // Simulate restoration
+        provider._setupTabPanel(panel as any, videoUrl, 'Restored Title', 123);
+
+        // 1. Verify HTML is set
+        expect(panelWebview.html).to.contain('dQw4w9WgXcQ');
+        expect(panelWebview.html).to.contain('start=123');
+
+        // 2. Verify handlers are set (should respond to messages)
+        const panelHandler = panelWebview.onDidReceiveMessage.getCall(0).args[0];
+        expect(panelHandler).to.be.a('function');
+
+        // 3. Verify disposal logic is set
+        const disposeHandler = panel.onDidDispose.getCall(0).args[0];
+        expect(disposeHandler).to.be.a('function');
+
+        // Trigger disposal and verify _tabPanel is cleared
+        disposeHandler();
+        expect(provider._tabPanel).to.be.undefined;
+    });
 });
 

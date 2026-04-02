@@ -308,13 +308,21 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public openInPanel(url: string, title?: string, startTime?: number) {
 		this._isTabActive = true;
 		if (this._tabPanel) {
-			this._tabPanel.reveal(vscode.ViewColumn.One);
-			this._tabPanel.title = title || 'YouTube Player';
-			this.loadUrl(url, startTime, true, 'tab');
-			return;
+			try {
+				this._tabPanel.reveal(vscode.ViewColumn.One);
+				this._tabPanel.title = title || 'YouTube Player';
+				this.loadUrl(url, startTime, true, 'tab');
+				return;
+			} catch {
+				this._tabPanel = undefined;
+			}
 		}
 
 		const panel = vscode.window.createWebviewPanel('youtube-player', title || 'YouTube Player', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
+		this._setupTabPanel(panel, url, title, startTime);
+	}
+
+	public _setupTabPanel(panel: vscode.WebviewPanel, url: string, title?: string, startTime?: number) {
 		this._tabPanel = panel;
 		this._lastUrl = url;
 		this._lastTime = startTime || 0;

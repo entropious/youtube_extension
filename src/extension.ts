@@ -189,10 +189,9 @@ export async function activate(context: vscode.ExtensionContext) {
 			async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, state: unknown) {
 				if (provider) {
 					const s = state as any;
-					provider._tabPanel = webviewPanel;
 					const url = s?.currentOriginalUrl || '';
 					const time = s?.currentTime || 0;
-					provider.openInPanel(url, webviewPanel.title, time);
+					provider._setupTabPanel(webviewPanel, url, webviewPanel.title, time);
 				}
 			}
 		})
