@@ -126,22 +126,42 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		if (!normalized) return;
 
 		const history = this._getHistory();
+		const existingIndex = history.findIndex(item => item.url === normalized);
+		let finalTitle = title;
+
+		// If no NEW title provided, try to keep the EXISTING one
+		if (!finalTitle && existingIndex !== -1) {
+			finalTitle = history[existingIndex].title;
+		}
+
 		const deduped = history.filter(item => item.url !== normalized);
-		deduped.unshift({ url: normalized, title: title });
+		deduped.unshift({ url: normalized, title: finalTitle });
 
 		await this._state.update(YouTubeViewProvider.historyKey, deduped.slice(0, 50));
 	}
 
 	public async _handleLoadRequest(url: string): Promise<void> {
+		// Immediately save/bubble up the URL in history (preserving any existing title)
 		await this._saveUrl(url);
+
+		// Resolve the title asynchronously
 		const title = await this._resolveTitle(url);
 		if (title) {
+			// Update history with the resolved title
 			await this._saveUrl(url, title);
+			
+			// Also update any matching favorite that is missing a title
 			const favorites = this._getFavorites();
 			const index = favorites.findIndex(f => f.url === url);
 			if (index !== -1 && !favorites[index].title) {
 				favorites[index].title = title;
 				await this._state.update(YouTubeViewProvider.favoritesKey, favorites);
+			}
+			
+			// Update the webview title if it's the current video
+			if (this._lastUrl === url) {
+				if (this._tabPanel) this._tabPanel.title = title;
+				this.postToAll({ type: 'history', value: this._getHistory() });
 			}
 		}
 	}
