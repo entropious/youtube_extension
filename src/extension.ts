@@ -173,8 +173,6 @@ export async function deactivate() {
 	}
 }
 
-// antigravity://entro.youtube-panel/load?url=https://www.youtube.com/watch?v=l_ruy_vA6X4&t=472s
-
 let provider: YouTubeViewProvider | null = null;
 
 class YouTubeUriHandler implements vscode.UriHandler {
