@@ -45,7 +45,7 @@ describe('YouTubeViewProvider Active View Tracking', () => {
         const realPanelHandler = panelWebview.onDidReceiveMessage.lastCall.args[0];
 
         // 2. Interaction with SIDEBAR
-        await sidebarHandler({ type: 'active' });
+        await sidebarHandler({ type: 'playbackStatus', status: 'playing' });
         
         // 3. Send togglePlay from extension
         provider.togglePlay();
@@ -58,7 +58,7 @@ describe('YouTubeViewProvider Active View Tracking', () => {
         panelWebview.postMessage.resetHistory();
         
         // 5. Interaction with PANEL
-        await realPanelHandler({ type: 'active' });
+        await realPanelHandler({ type: 'playbackStatus', status: 'playing' });
         
         // 6. Send togglePlay from extension
         provider.togglePlay();
