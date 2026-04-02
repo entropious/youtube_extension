@@ -173,7 +173,44 @@ export async function deactivate() {
 	}
 }
 
+// antigravity://entro.youtube-panel/load?url=https://www.youtube.com/watch?v=l_ruy_vA6X4&t=472s
+
 let provider: YouTubeViewProvider | null = null;
+
+class YouTubeUriHandler implements vscode.UriHandler {
+	constructor(private getProvider: () => YouTubeViewProvider | null) {}
+
+	async handleUri(uri: vscode.Uri) {
+		try {
+			if (uri.path === '/load' || uri.path === 'load') {
+				const query = new URLSearchParams(uri.query);
+				const url = query.get('url');
+				if (!url) {
+					vscode.window.showErrorMessage('YouTube Panel: Missing "url" parameter in URI');
+					return;
+				}
+
+				const startTime = parseInt(query.get('startTime') || query.get('t') || '0', 10);
+				const autoplay = query.get('autoplay') !== '0';
+				
+				// Reveal the sidebar view
+				await vscode.commands.executeCommand('youtube-panel.view.focus');
+				
+				const provider = this.getProvider();
+				if (provider) {
+					const resolvedUrl = await provider.resolveUrl(url);
+					provider.loadUrl(resolvedUrl, startTime, autoplay);
+				} else {
+					throw new Error('YouTubeViewProvider not initialized');
+				}
+			} else {
+				vscode.window.showErrorMessage(`YouTube Panel: Unknown URI path "${uri.path}"`);
+			}
+		} catch (err: any) {
+			vscode.window.showErrorMessage(`YouTube Panel URI Error: ${err.message || err}`);
+		}
+	}
+}
 
 export async function activate(context: vscode.ExtensionContext) {
 	await startProxyServer();
@@ -226,5 +263,9 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('youtube-panel.openInPanel', (url: string, title?: string, startTime?: number) => {
 			provider?.openInPanel(url, title, startTime);
 		})
+	);
+
+	context.subscriptions.push(
+		vscode.window.registerUriHandler(new YouTubeUriHandler(() => provider))
 	);
 }
