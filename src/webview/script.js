@@ -45,6 +45,7 @@ const emptyState = document.getElementById('empty-state');
 const resultsContainer = document.getElementById('results-container');
 const autoplayCheck = document.getElementById('autoplay-check');
 const statusText = document.getElementById('status-text');
+const header = document.querySelector('.header');
 
 let favorites = [];
 
@@ -194,20 +195,20 @@ openBtn.addEventListener('click', () => {
 
 historyBtn.addEventListener('click', (e) => {
 	e.stopPropagation();
+	const wasVisible = historyDropdown.classList.contains('visible');
 	favoritesDropdown.classList.remove('visible');
-	if (historyDropdown.classList.contains('visible')) {
-		historyDropdown.classList.remove('visible');
-	} else {
+	historyDropdown.classList.toggle('visible');
+	if (!wasVisible) {
 		vscode.postMessage({ type: 'requestHistory' });
 	}
 });
 
 favoritesBtn.addEventListener('click', (e) => {
 	e.stopPropagation();
+	const wasVisible = favoritesDropdown.classList.contains('visible');
 	historyDropdown.classList.remove('visible');
-	if (favoritesDropdown.classList.contains('visible')) {
-		favoritesDropdown.classList.remove('visible');
-	} else {
+	favoritesDropdown.classList.toggle('visible');
+	if (!wasVisible) {
 		log('Requesting favorites from extension');
 		vscode.postMessage({ type: 'requestFavorites' });
 	}
@@ -238,6 +239,11 @@ favCurrentBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('click', () => {
+	historyDropdown.classList.remove('visible');
+	favoritesDropdown.classList.remove('visible');
+});
+
+header.addEventListener('mouseleave', () => {
 	historyDropdown.classList.remove('visible');
 	favoritesDropdown.classList.remove('visible');
 });
@@ -593,7 +599,6 @@ function showHistory(urls) {
 
 		});
 	}
-	historyDropdown.classList.add('visible');
 }
 
 function showFavorites(urls) {
@@ -639,7 +644,6 @@ function showFavorites(urls) {
 
 		});
 	}
-	favoritesDropdown.classList.add('visible');
 }
 
 function isFavorited(url) {
