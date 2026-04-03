@@ -148,6 +148,7 @@ if (effectiveUrl && effectiveUrl !== 'about:blank') {
 	emptyState.style.display = 'flex';
 	statusText.textContent = 'Ready';
 	currentVideoId = '';
+	setTimeout(() => emptyUrlInput.focus(), 100);
 }
 
 
@@ -176,6 +177,21 @@ input.addEventListener('click', () => {
 	input.select();
 });
 
+
+const emptyUrlInput = document.getElementById('empty-url-input');
+const emptyUrlBtn = document.getElementById('empty-url-btn');
+
+emptyUrlInput.addEventListener('keydown', (e) => {
+	if (e.key === 'Enter') {
+		const url = emptyUrlInput.value;
+		if (url) { loadVideo(url); }
+	}
+});
+
+emptyUrlBtn.addEventListener('click', () => {
+	const url = emptyUrlInput.value;
+	if (url) { loadVideo(url); }
+});
 
 nextBtn.addEventListener('click', () => {
 	requestNext(true);
@@ -483,6 +499,21 @@ window.addEventListener('message', event => {
 			break;
 		case 'nextVideo':
 			requestNext(true);
+			break;
+		case 'stateCleared':
+			log('State cleared by extension');
+			lastLoadedUrl = 'about:blank';
+			lastLoadedOriginalUrl = '';
+			currentVideoId = '';
+			lastCurrentTime = 0;
+			iframe.src = 'about:blank';
+			input.value = '';
+			emptyUrlInput.value = '';
+			emptyState.style.display = 'flex';
+			statusText.textContent = 'Ready';
+			clearBtn.style.display = 'none';
+			saveState();
+			setTimeout(() => emptyUrlInput.focus(), 100);
 			break;
 	}
 	saveState();

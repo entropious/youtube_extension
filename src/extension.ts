@@ -275,6 +275,19 @@ export async function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand('youtube-panel.clearAll', async () => {
+			if (provider) {
+				await provider.clearAll();
+			} else {
+				await context.globalState.update(YouTubeViewProvider.historyKey, []);
+				await context.globalState.update(YouTubeViewProvider.favoritesKey, []);
+				await context.globalState.update(YouTubeViewProvider.timestampsKey, {});
+			}
+			vscode.window.showInformationMessage('YouTube Panel: All state cleared.');
+		})
+	);
+
+	context.subscriptions.push(
 		vscode.window.registerUriHandler(new YouTubeUriHandler(() => provider))
 	);
 }
