@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { HistoryEntry, extractVideoId, formatYoutubeUrl, parseEntries } from './utils';
 
+// TODO: Add playlist support
+
 export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	public static readonly viewType = 'youtube-panel.view';
@@ -400,8 +402,32 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		panel.onDidDispose(() => {
 			if (this._tabPanel === panel) this._tabPanel = undefined;
 			if (this._isTabActive) {
-				void this._saveTimestamp(this._lastUrl || url, this._lastTime);
-				this.loadUrl(this._lastUrl || url, this._lastTime, 'sidebar');
+				const targetUrl = this._lastUrl || url;
+				const time = this._lastTime;
+				void this._saveTimestamp(targetUrl, time);
+				this.loadUrl(targetUrl, time, 'sidebar');
+			}
+		});
+
+		panel.onDidChangeViewState(e => {
+			const p = e.webviewPanel;
+			const url = this._lastUrl;
+			const time = this._lastTime;
+			if (!url) return;
+
+			if (p.visible) {
+				// Tab became visible/active - sync FROM sidebar TO tab
+				if (this._tabHasInteracted && !this._isTabActive) {
+					this._isTabActive = true;
+					this.loadUrl(url, time, 'tab');
+				}
+			} else {
+				// Tab became hidden - sync FROM tab TO sidebar
+				if (this._sidebarHasInteracted && this._isTabActive) {
+					this._isTabActive = false;
+					void this._saveTimestamp(url, time);
+					this.loadUrl(url, time, 'sidebar');
+				}
 			}
 		});
 	}
@@ -419,7 +445,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			if (webviewView.visible && url) {
 				this.loadUrl(url, time, 'sidebar');
 			} else if (!webviewView.visible && url) {
-				void this._saveTimestamp(url, time);
+					void this._saveTimestamp(url, time);
 				if (this._tabPanel) this.loadUrl(url, time, 'tab');
 			}
 		});
