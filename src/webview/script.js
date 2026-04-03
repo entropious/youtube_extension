@@ -36,18 +36,20 @@ const clearBtn = document.getElementById('clear-btn');
 const nextBtn = document.getElementById('next-btn');
 const openBtn = document.getElementById('open-btn');
 const historyBtn = document.getElementById('history-btn');
-const historyDropdown = document.getElementById('history-dropdown');
 const favoritesBtn = document.getElementById('favorites-btn');
-const favoritesDropdown = document.getElementById('favorites-dropdown');
 const favCurrentBtn = document.getElementById('fav-current-btn');
 const iframe = document.getElementById('video-frame');
 const emptyState = document.getElementById('empty-state');
 const resultsContainer = document.getElementById('results-container');
 const autoplayCheck = document.getElementById('autoplay-check');
+const closeListBtn = document.getElementById('close-list-btn');
 const statusText = document.getElementById('status-text');
 const header = document.querySelector('.header');
 
 let favorites = [];
+let currentListType = null;
+let pendingHistoryRequest = false;
+let pendingFavoritesRequest = false;
 
 let currentVideoId = extractVideoId(initialUrl);
 let isPaused = false;
@@ -235,35 +237,26 @@ openBtn.addEventListener('click', () => {
 
 historyBtn.addEventListener('click', (e) => {
 	e.stopPropagation();
-	const wasVisible = historyDropdown.classList.contains('visible');
-	favoritesDropdown.classList.remove('visible');
-	historyDropdown.classList.toggle('visible');
-	if (!wasVisible) {
-		vscode.postMessage({ type: 'requestHistory' });
-	}
+    if (currentListType === 'history' && resultsContainer.style.display !== 'none') {
+        closeList();
+    } else {
+        pendingHistoryRequest = true;
+	    vscode.postMessage({ type: 'requestHistory' });
+    }
 });
 
 favoritesBtn.addEventListener('click', (e) => {
 	e.stopPropagation();
-	const wasVisible = favoritesDropdown.classList.contains('visible');
-	historyDropdown.classList.remove('visible');
-	favoritesDropdown.classList.toggle('visible');
-	if (!wasVisible) {
-		log('Requesting favorites from extension');
-		vscode.postMessage({ type: 'requestFavorites' });
-	}
-});
-
-historyDropdown.addEventListener('click', (e) => {
-	e.stopPropagation();
-});
-
-favoritesDropdown.addEventListener('click', (e) => {
-	e.stopPropagation();
+    if (currentListType === 'favorites' && resultsContainer.style.display !== 'none') {
+        closeList();
+    } else {
+        pendingFavoritesRequest = true;
+        log('Requesting favorites from extension');
+        vscode.postMessage({ type: 'requestFavorites' });
+    }
 });
 
 favCurrentBtn.addEventListener('click', () => {
-
     if (!currentVideoId) return;
     
     const currentlyFavorited = isFavorited(lastLoadedOriginalUrl);
@@ -278,14 +271,37 @@ favCurrentBtn.addEventListener('click', () => {
     }
 });
 
-document.addEventListener('click', () => {
-	historyDropdown.classList.remove('visible');
-	favoritesDropdown.classList.remove('visible');
+closeListBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeList();
 });
 
-header.addEventListener('mouseleave', () => {
-	historyDropdown.classList.remove('visible');
-	favoritesDropdown.classList.remove('visible');
+function closeList() {
+    resultsContainer.style.display = 'none';
+    document.body.classList.remove('list-open');
+    closeListBtn.style.display = 'none';
+    currentListType = null;
+    
+    if (!currentVideoId && (!iframe.src || iframe.src === 'about:blank')) {
+        emptyState.style.display = 'flex';
+        iframe.style.display = 'none';
+    } else {
+        emptyState.style.display = 'none';
+        iframe.style.display = 'block';
+    }
+    statusText.textContent = (currentVideoId && !isPaused) ? 'Playing' : 'Ready';
+}
+
+document.addEventListener('click', () => {
+    // No dropdowns to hide anymore
+});
+
+resultsContainer.addEventListener('mouseleave', (e) => {
+    if (currentListType && currentListType !== 'search results') {
+        // If moving to the header area (top: 0 to top: 76px), let's see if we should close
+        // But maybe it's simpler to just close it as requested
+        closeList();
+    }
 });
 
 
@@ -313,10 +329,7 @@ function loadVideo(url) {
 
 	
 	setTimeout(() => {
-		resultsContainer.style.display = 'none';
-		iframe.style.display = 'block';
-		historyDropdown.classList.remove('visible');
-		favoritesDropdown.classList.remove('visible');
+		closeList();
 	}, 50);
 
 	
@@ -493,8 +506,6 @@ window.addEventListener('message', event => {
 
 			
 			updateFavoriteButton();
-			historyDropdown.classList.remove('visible');
-			favoritesDropdown.classList.remove('visible');
 			break;
 
 
@@ -502,11 +513,17 @@ window.addEventListener('message', event => {
 			showSearchResults(message.results);
 			break;
 		case 'history':
-			showHistory(message.value);
+			if (pendingHistoryRequest || (currentListType === 'history' && resultsContainer.style.display !== 'none')) {
+			    showHistory(message.value);
+                pendingHistoryRequest = false;
+            }
 			break;
 		case 'favorites':
 			favorites = message.value;
-			showFavorites(favorites);
+            if (pendingFavoritesRequest || (currentListType === 'favorites' && resultsContainer.style.display !== 'none')) {
+			    showFavorites(favorites);
+                pendingFavoritesRequest = false;
+            }
 			updateFavoriteButton();
 			break;
 		case 'autoplayUpdated':
@@ -554,53 +571,98 @@ function requestNext(force = false) {
 	}
 }
 
-function showSearchResults(results) {
+function renderList(title, items, type, onClearAll) {
 	resultsContainer.innerHTML = '';
+	currentListType = type;
 	
-	// Add close button
-	const closeBtn = document.createElement('div');
-	closeBtn.className = 'close-results-btn';
-	closeBtn.innerHTML = '✕';
-	closeBtn.title = 'Close Search Results';
-	closeBtn.addEventListener('click', (e) => {
-		e.stopPropagation();
-		resultsContainer.style.display = 'none';
-		if (currentVideoId || (iframe.src && iframe.src !== 'about:blank')) {
-			iframe.style.display = 'block';
-			emptyState.style.display = 'none';
-		} else {
-			iframe.style.display = 'none';
-			emptyState.style.display = 'flex';
-		}
-		statusText.textContent = (currentVideoId && !isPaused) ? 'Playing' : 'Ready';
-	});
-	resultsContainer.appendChild(closeBtn);
+    // Show integrated close button ONLY for search results
+    closeListBtn.style.display = (type === 'search results' ? 'flex' : 'none');
+    document.body.classList.add('list-open');
 
-	if (results.length === 0) {
+	// Header for history/favorites with Clear All
+	if (onClearAll || title) {
+		const header = document.createElement('div');
+		header.className = 'list-header';
+		
+		const titleEl = document.createElement('div');
+		titleEl.className = 'list-title';
+		titleEl.textContent = title;
+		header.appendChild(titleEl);
+
+		if (onClearAll) {
+			const clearBtn = document.createElement('button');
+			clearBtn.className = 'clear-all-btn-big';
+			clearBtn.textContent = 'Clear All';
+			clearBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				onClearAll();
+			});
+			header.appendChild(clearBtn);
+		}
+		resultsContainer.appendChild(header);
+	}
+
+	if (items.length === 0) {
 		const noResults = document.createElement('div');
-		noResults.style.cssText = 'color:#777; text-align:center; padding-top:40px;';
-		noResults.textContent = 'No results found';
+		noResults.className = 'no-results-msg';
+		noResults.textContent = `No ${type} found`;
 		resultsContainer.appendChild(noResults);
 	} else {
-		results.forEach(res => {
+		items.forEach(item => {
+			let videoId, thumbnailUrl, linkUrl, itemTitle;
+			
+			if (type === 'search results') {
+				videoId = item.id;
+				thumbnailUrl = item.thumbnail;
+				linkUrl = `https://www.youtube.com/watch?v=${item.id}`;
+				itemTitle = item.title;
+			} else {
+				videoId = extractVideoId(item.url);
+				thumbnailUrl = videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '';
+				linkUrl = item.url;
+				itemTitle = item.title || item.url;
+			}
+
 			const div = document.createElement('div');
-			div.className = 'search-result';
+			div.className = 'list-item';
+			const isCurrent = linkUrl === lastLoadedOriginalUrl;
+			if (isCurrent) div.classList.add('current');
+
 			div.innerHTML = `
-				<div class="result-thumb" style="background-image: url('${res.thumbnail}')"></div>
-				<div class="result-info">
-					<div class="result-title">${res.title}</div>
+				<div class="item-thumb" style="background-image: url('${thumbnailUrl}')"></div>
+				<div class="item-info">
+					<div class="item-title ${isCurrent ? 'current' : ''}">${itemTitle}</div>
 				</div>
+				${type !== 'search results' ? `<button class="item-remove-btn" title="Remove">✕</button>` : ''}
 			`;
-			div.addEventListener('click', () => {
-				loadVideo(`https://www.youtube.com/watch?v=${res.id}`);
+			
+			div.addEventListener('click', (e) => {
+				if (e.target.classList.contains('item-remove-btn')) return;
+				loadVideo(linkUrl);
 			});
+
+			if (type !== 'search results') {
+				const removeBtn = div.querySelector('.item-remove-btn');
+				removeBtn.addEventListener('click', (e) => {
+					e.stopPropagation();
+					if (type === 'history') {
+						vscode.postMessage({ type: 'removeHistory', url: item.url });
+					} else {
+						vscode.postMessage({ type: 'removeFavorite', url: item.url });
+					}
+				});
+			}
+
 			resultsContainer.appendChild(div);
 		});
 	}
 	resultsContainer.style.display = 'flex';
-	iframe.style.display = 'none';
 	emptyState.style.display = 'none';
-	statusText.textContent = 'Search results';
+	statusText.textContent = title;
+}
+
+function showSearchResults(results) {
+	renderList('Search results', results, 'search results');
 }
 
 function normalizeInput(url) {
@@ -617,111 +679,13 @@ function normalizeInput(url) {
 }
 
 function showHistory(urls) {
-	historyDropdown.innerHTML = '';
-	if (urls.length === 0) {
-		const item = document.createElement('div');
-		item.className = 'history-item';
-		item.textContent = 'No history yet';
-		historyDropdown.appendChild(item);
-	} else {
-		// Add "Clear All" button at the top
-		const header = document.createElement('div');
-		header.className = 'dropdown-header';
-		
-		const title = document.createElement('span');
-		title.textContent = 'Recent History';
-		header.appendChild(title);
-
-		const clearAll = document.createElement('button');
-		clearAll.className = 'clear-all-btn';
-		clearAll.textContent = 'Clear All';
-		clearAll.addEventListener('click', (e) => {
-			e.stopPropagation();
-			vscode.postMessage({ type: 'clearHistory' });
-		});
-		header.appendChild(clearAll);
-		historyDropdown.appendChild(header);
-
-		urls.forEach(entry => {
-			const item = document.createElement('div');
-			item.className = 'history-item';
-			const isCurrent = entry.url === lastLoadedOriginalUrl;
-			if (isCurrent) {
-				item.classList.add('current');
-			}
-			
-			const text = document.createElement('div');
-			text.className = 'item-text';
-			if (isCurrent) {
-				text.classList.add('current');
-			}
-			text.textContent = entry.title || entry.url;
-			text.title = entry.url;
-			
-			// Click the whole item
-			item.addEventListener('click', () => {
-				loadVideo(entry.url);
-			});
-
-			const remove = document.createElement('button');
-			remove.className = 'remove-btn';
-			remove.textContent = 'Remove';
-			remove.addEventListener('click', (e) => {
-				e.stopPropagation();
-				vscode.postMessage({ type: 'removeHistory', url: entry.url });
-			});
-			
-			item.appendChild(text);
-			item.appendChild(remove);
-			historyDropdown.appendChild(item);
-
-		});
-	}
+	renderList('Recent History', urls, 'history', () => {
+		vscode.postMessage({ type: 'clearHistory' });
+	});
 }
 
 function showFavorites(urls) {
-	favoritesDropdown.innerHTML = '';
-	if (urls.length === 0) {
-		const item = document.createElement('div');
-		item.className = 'favorite-item';
-		item.textContent = 'No favorites yet';
-		favoritesDropdown.appendChild(item);
-	} else {
-		urls.forEach(entry => {
-			const item = document.createElement('div');
-			item.className = 'favorite-item';
-			const isCurrent = entry.url === lastLoadedOriginalUrl;
-			if (isCurrent) {
-				item.classList.add('current');
-			}
-			
-			const text = document.createElement('div');
-			text.className = 'item-text';
-			if (isCurrent) {
-				text.classList.add('current');
-			}
-			text.textContent = entry.title || entry.url;
-			text.title = entry.url;
-			
-			// Move click listener to the entire item for better hit area
-			item.addEventListener('click', () => {
-				loadVideo(entry.url);
-			});
-
-			const remove = document.createElement('button');
-			remove.className = 'remove-btn';
-			remove.textContent = 'Remove';
-			remove.addEventListener('click', (e) => {
-				e.stopPropagation(); // Prevent loading the video when removing
-				vscode.postMessage({ type: 'removeFavorite', url: entry.url });
-			});
-			
-			item.appendChild(text);
-			item.appendChild(remove);
-			favoritesDropdown.appendChild(item);
-
-		});
-	}
+	renderList('Favorites', urls, 'favorites');
 }
 
 function isFavorited(url) {
