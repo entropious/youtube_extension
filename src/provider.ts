@@ -340,11 +340,26 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	public openInPanel(url: string, title?: string, startTime?: number) {
+		const wasMovingFromSidebar = !this._isTabActive;
+		
+		// If startTime not provided, try to take it from current session if moving from sidebar with same URL
+		if (startTime === undefined && wasMovingFromSidebar && this._lastUrl === url) {
+			startTime = this._lastTime;
+		}
+
 		this._isTabActive = true;
+		
+		// If we are moving from an active sidebar, transfer interaction state to ensure autoplay in tab
+		if (wasMovingFromSidebar && this._sidebarHasInteracted) {
+			this._tabHasInteracted = true;
+		}
+
 		if (this._tabPanel) {
 			try {
-				this._tabPanel.reveal(vscode.ViewColumn.One);
-				this._tabPanel.title = title || 'YouTube Player';
+				this._tabPanel.reveal();
+				if (title) {
+					this._tabPanel.title = title;
+				}
 				this.loadUrl(url, startTime, 'tab');
 				return;
 			} catch {
@@ -358,10 +373,11 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	public _setupTabPanel(panel: vscode.WebviewPanel, url: string, title?: string, startTime?: number) {
 		this._tabPanel = panel;
-		this._tabHasInteracted = false;
+		// Keep interaction state if it was already set (e.g. when moving from sidebar)
+		this._tabHasInteracted = this._tabHasInteracted || false;
 		this._lastUrl = url;
 		this._lastTime = startTime || 0;
-		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, false), url);
+		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, this._tabHasInteracted), url);
 		this._setupWebviewHandlers(panel.webview, true);
 
 		panel.onDidDispose(() => {
