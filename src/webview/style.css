@@ -333,17 +333,58 @@ select {
 	justify-content: center;
 	color: #777;
 	font-size: 14px;
-	z-index: 1;
-	pointer-events: none;
+	z-index: 1001; 
 	text-align: center;
 	padding: 40px;
+    background: #000;
 }
 
 #empty-state svg {
 	width: 48px;
 	height: 48px;
-	margin-bottom: 16px;
+	margin-bottom: 24px;
 	fill: #333;
+}
+
+.empty-state-text {
+    margin-bottom: 16px;
+    font-size: 16px;
+    color: #999;
+}
+
+.empty-state-input-container {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    max-width: 320px;
+}
+
+#empty-url-input {
+    flex-grow: 1;
+    background: rgba(45, 45, 45, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 10px 14px;
+    color: #fff;
+    outline: none;
+}
+
+#empty-url-input:focus {
+    border-color: var(--accent-color);
+}
+
+#empty-url-btn {
+    background: var(--accent-color);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 0 20px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+#empty-url-btn:hover {
+    background: #cc0000;
 }
 
 .results-container {

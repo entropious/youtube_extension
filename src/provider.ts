@@ -216,6 +216,23 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		await this._state.update(YouTubeViewProvider.historyKey, []);
 	}
 
+	public async clearAll(): Promise<void> {
+		await this._state.update(YouTubeViewProvider.historyKey, []);
+		await this._state.update(YouTubeViewProvider.favoritesKey, []);
+		await this._state.update(YouTubeViewProvider.timestampsKey, {});
+		this._lastUrl = undefined;
+		this._lastTime = 0;
+		this._timestampCache = {};
+		
+		const message = { type: 'stateCleared' };
+		if (this._sidebarView) {
+			this._sidebarView.webview.postMessage(message);
+		}
+		if (this._tabPanel) {
+			this._tabPanel.webview.postMessage(message);
+		}
+	}
+
 	private _getTimestamp(url: string): number {
 		const videoId = this._extractVideoId(url);
 		if (!videoId) return 0;
