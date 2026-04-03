@@ -160,6 +160,18 @@ input.addEventListener('keydown', (e) => {
 	if (e.key === 'Enter') {
 		const url = input.value;
 		if (url) { loadVideo(url); }
+	} else if (e.key === 'Escape') {
+		if (resultsContainer.style.display === 'flex') {
+			resultsContainer.style.display = 'none';
+			if (currentVideoId || (iframe.src && iframe.src !== 'about:blank')) {
+				iframe.style.display = 'block';
+				emptyState.style.display = 'none';
+			} else {
+				iframe.style.display = 'none';
+				emptyState.style.display = 'flex';
+			}
+			statusText.textContent = (currentVideoId && !isPaused) ? 'Playing' : 'Ready';
+		}
 	}
 });
 
@@ -185,6 +197,18 @@ emptyUrlInput.addEventListener('keydown', (e) => {
 	if (e.key === 'Enter') {
 		const url = emptyUrlInput.value;
 		if (url) { loadVideo(url); }
+	} else if (e.key === 'Escape') {
+		if (resultsContainer.style.display === 'flex') {
+			resultsContainer.style.display = 'none';
+			if (currentVideoId || (iframe.src && iframe.src !== 'about:blank')) {
+				iframe.style.display = 'block';
+				emptyState.style.display = 'none';
+			} else {
+				iframe.style.display = 'none';
+				emptyState.style.display = 'flex';
+			}
+			statusText.textContent = (currentVideoId && !isPaused) ? 'Playing' : 'Ready';
+		}
 	}
 });
 
@@ -532,8 +556,31 @@ function requestNext(force = false) {
 
 function showSearchResults(results) {
 	resultsContainer.innerHTML = '';
+	
+	// Add close button
+	const closeBtn = document.createElement('div');
+	closeBtn.className = 'close-results-btn';
+	closeBtn.innerHTML = '✕';
+	closeBtn.title = 'Close Search Results';
+	closeBtn.addEventListener('click', (e) => {
+		e.stopPropagation();
+		resultsContainer.style.display = 'none';
+		if (currentVideoId || (iframe.src && iframe.src !== 'about:blank')) {
+			iframe.style.display = 'block';
+			emptyState.style.display = 'none';
+		} else {
+			iframe.style.display = 'none';
+			emptyState.style.display = 'flex';
+		}
+		statusText.textContent = (currentVideoId && !isPaused) ? 'Playing' : 'Ready';
+	});
+	resultsContainer.appendChild(closeBtn);
+
 	if (results.length === 0) {
-		resultsContainer.innerHTML = '<div style="color:#777; text-align:center; padding-top:40px;">No results found</div>';
+		const noResults = document.createElement('div');
+		noResults.style.cssText = 'color:#777; text-align:center; padding-top:40px;';
+		noResults.textContent = 'No results found';
+		resultsContainer.appendChild(noResults);
 	} else {
 		results.forEach(res => {
 			const div = document.createElement('div');
