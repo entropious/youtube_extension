@@ -87,4 +87,25 @@ describe('YouTubeViewProvider Timestamp History', () => {
         expect(lastLoad.args[0].originalUrl).to.equal(videoA);
         expect(lastLoad.args[0].startTime).to.equal(500, 'Should restore A from 500 even if memento update was in progress');
     });
+
+    it('should evict oldest timestamps when reaching limit (500)', async () => {
+        // 1. Fill with 500 entries
+        for (let i = 0; i < 500; i++) {
+            await provider._saveTimestamp(`https://youtube.com/watch?v=v${i}`, 100);
+            // Small delay to ensure lastUsed differ if needed, though they are added sequentially
+        }
+
+        let timestamps = memento.get<Record<string, any>>(YouTubeViewProvider.timestampsKey, {});
+        expect(Object.keys(timestamps)).to.have.lengthOf(500);
+
+        // 2. Add 501st entry
+        await provider._saveTimestamp('https://youtube.com/watch?v=v_new', 200, true);
+        
+        timestamps = memento.get<Record<string, any>>(YouTubeViewProvider.timestampsKey, {});
+        expect(Object.keys(timestamps)).to.have.lengthOf(500);
+        expect(timestamps['v_new']).to.not.be.undefined;
+        // One of the old ones should be gone (v0 if timestamps are strictly ordered by insertion/lastUsed)
+        expect(timestamps['v0']).to.be.undefined;
+    });
 });
+

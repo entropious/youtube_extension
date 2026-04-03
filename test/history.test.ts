@@ -51,4 +51,41 @@ describe('YouTubeViewProvider History', () => {
         const history = (provider as any)._getHistory();
         expect(history[0].title).to.equal(newTitle);
     });
+
+    it('should remove an item from history', async () => {
+        const url1 = 'https://url1.com';
+        const url2 = 'https://url2.com';
+        
+        await (provider as any)._saveUrl(url1, 'T1');
+        await (provider as any)._saveUrl(url2, 'T2');
+        
+        await (provider as any)._removeHistory(url1);
+        
+        const history = (provider as any)._getHistory();
+        expect(history).to.have.lengthOf(1);
+        expect(history[0].url).to.equal(url2);
+    });
+
+    it('should clear the entire history', async () => {
+        await (provider as any)._saveUrl('https://url1.com', 'T1');
+        await (provider as any)._saveUrl('https://url2.com', 'T2');
+        
+        await (provider as any)._clearHistory();
+        
+        const history = (provider as any)._getHistory();
+        expect(history).to.be.empty;
+    });
+
+    it('should limit history to 50 items', async () => {
+        for (let i = 0; i < 60; i++) {
+            await (provider as any)._saveUrl(`https://url${i}.com`);
+        }
+        
+        const history = (provider as any)._getHistory();
+        expect(history).to.have.lengthOf(50);
+        expect(history[0].url).to.equal('https://url59.com'); // Last added is first
+        expect(history[49].url).to.equal('https://url10.com'); // url0-url9 should be evicted
+    });
 });
+
+
