@@ -119,7 +119,7 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         const panelHandler = panelWebview.onDidReceiveMessage.getCall(0).args[0];
         await panelHandler({ type: 'playbackStatus', status: 'playing' });
 
-        await provider.loadUrl('v2', 0, true);
+        await provider.loadUrl('v2', 0, 'tab');
 
         // Active tab gets it
         expect(panelWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl', autoplay: true }))).to.be.true;

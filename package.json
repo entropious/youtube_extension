@@ -88,14 +88,14 @@
     "test": "mocha -r ts-node/register -r ./test/bootstrap.ts test/**/*.test.ts"
   },
   "devDependencies": {
-    "@types/chai": "^5.2.3",
+    "@types/chai": "^4.3.4",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.19",
     "@types/sinon": "^21.0.0",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^5.52.0",
     "@typescript-eslint/parser": "^5.52.0",
-    "chai": "^6.2.2",
+    "chai": "^4.3.7",
     "eslint": "^8.34.0",
     "mocha": "^11.7.5",
     "sinon": "^21.0.3",

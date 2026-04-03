@@ -85,20 +85,31 @@ function getProxyEmbedHtml(videoId: string, startTime = 0, autoplay = true): str
                 const nextStartTime = data.startTime || 0;
                 const nextAutoplay = data.autoplay !== false;
                 
+                const isSameId = p && p.getVideoData && p.getVideoData().video_id === nextId;
+
+
                 v = nextId;
                 s = nextStartTime;
                 a = nextAutoplay;
 
-                if (p && p.loadVideoById) {
+                if (p) {
                     try {
-                        if (a) {
-                            p.loadVideoById({ videoId: v, startSeconds: s });
-                            p.playVideo();
-                        } else {
-                            p.cueVideoById({ videoId: v, startSeconds: s });
+                        if (isSameId) {
+
+                            if (p.seekTo) p.seekTo(s, true);
+                            if (a && p.playVideo) p.playVideo();
+                            else if (!a && p.pauseVideo) p.pauseVideo();
+                        } else if (p.loadVideoById) {
+
+                            if (a) {
+                                p.loadVideoById({ videoId: v, startSeconds: s });
+                                if (p.playVideo) p.playVideo();
+                            } else {
+                                p.cueVideoById({ videoId: v, startSeconds: s });
+                            }
                         }
                     } catch (err) {
-                        proxyLog('error', '[YOUTUBE_EXT][PROXY] Error during loadVideoById:', err);
+                        proxyLog('error', '[YOUTUBE_EXT][PROXY] Error during playback control:', err);
                     }
                 }
             } else if (data.event === 'command' && p && p[data.func]) {
@@ -197,7 +208,7 @@ class YouTubeUriHandler implements vscode.UriHandler {
 				const provider = this.getProvider();
 				if (provider) {
 					const resolvedUrl = await provider.resolveUrl(url);
-					provider.loadUrl(resolvedUrl, startTime, autoplay);
+					provider.loadUrl(resolvedUrl, startTime);
 				} else {
 					throw new Error('YouTubeViewProvider not initialized');
 				}

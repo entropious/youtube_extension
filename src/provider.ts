@@ -14,6 +14,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	private _sidebarView?: vscode.WebviewView;
 	public _tabPanel?: vscode.WebviewPanel;
 	private _isTabActive = false;
+	private _sidebarHasInteracted = false;
+	private _tabHasInteracted = false;
 	public _lastUrl?: string;
 	public _lastTime = 0;
 	private _timestampCache: Record<string, number> = {};
@@ -67,7 +69,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
  
-	public async loadUrl(url: string, startTime?: number, autoplay = true, targetView?: 'tab' | 'sidebar'): Promise<void> {
+	public async loadUrl(url: string, startTime?: number, targetView?: 'tab' | 'sidebar'): Promise<void> {
 		const savePromise = this.saveCurrentState();
 		void this._handleLoadRequest(url);
 
@@ -78,13 +80,23 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._lastUrl = url;
 		this._lastTime = startTime;
 
-		const formattedUrl = this._formatYoutubeUrl(url, startTime, autoplay);
+		let hasInteracted = false;
+		if (targetView === 'tab') {
+			hasInteracted = this._tabHasInteracted;
+		} else if (targetView === 'sidebar') {
+			hasInteracted = this._sidebarHasInteracted;
+		} else {
+			hasInteracted = this._isTabActive ? this._tabHasInteracted : this._sidebarHasInteracted;
+		}
+
+		const formattedUrl = this._formatYoutubeUrl(url, startTime, hasInteracted);
+		
 		const message = {
 			type: 'loadUrl',
 			value: formattedUrl,
 			originalUrl: url,
 			startTime: startTime,
-			autoplay: autoplay,
+			autoplay: hasInteracted,
 			targetView: targetView
 		};
 		if (targetView === 'tab' && this._tabPanel) {
@@ -101,7 +113,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		return formatYoutubeUrl(url, startTime, autoplay, this._getProxyPort());
 	}
 
-	private async _loadUrlTargeted(webview: vscode.Webview, isTab: boolean, url: string, startTime?: number, autoplay = true) {
+	private async _loadUrlTargeted(webview: vscode.Webview, isTab: boolean, url: string, startTime?: number) {
 		this._isTabActive = isTab;
 		if (this._lastUrl) await this._saveTimestamp(this._lastUrl, this._lastTime, true);
 		
@@ -111,13 +123,15 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		const finalStartTime = this._lastTime || 0;
 		void this._handleLoadRequest(url);
 
-		const formattedUrl = this._formatYoutubeUrl(url, finalStartTime, autoplay);
+		const hasInteracted = isTab ? this._tabHasInteracted : this._sidebarHasInteracted;
+
+		const formattedUrl = this._formatYoutubeUrl(url, finalStartTime, hasInteracted);
 		webview.postMessage({
 			type: 'loadUrl',
 			value: formattedUrl,
 			originalUrl: url,
 			startTime: finalStartTime,
-			autoplay: autoplay
+			autoplay: hasInteracted
 		});
 	}
 
@@ -331,7 +345,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			try {
 				this._tabPanel.reveal(vscode.ViewColumn.One);
 				this._tabPanel.title = title || 'YouTube Player';
-				this.loadUrl(url, startTime, true, 'tab');
+				this.loadUrl(url, startTime, 'tab');
 				return;
 			} catch {
 				this._tabPanel = undefined;
@@ -344,22 +358,24 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	public _setupTabPanel(panel: vscode.WebviewPanel, url: string, title?: string, startTime?: number) {
 		this._tabPanel = panel;
+		this._tabHasInteracted = false;
 		this._lastUrl = url;
 		this._lastTime = startTime || 0;
-		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime), url);
+		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, false), url);
 		this._setupWebviewHandlers(panel.webview, true);
 
 		panel.onDidDispose(() => {
 			if (this._tabPanel === panel) this._tabPanel = undefined;
 			if (this._isTabActive) {
 				void this._saveTimestamp(this._lastUrl || url, this._lastTime);
-				this.loadUrl(this._lastUrl || url, this._lastTime, false, 'sidebar');
+				this.loadUrl(this._lastUrl || url, this._lastTime, 'sidebar');
 			}
 		});
 	}
 
 	public resolveWebviewView(webviewView: vscode.WebviewView, _context: vscode.WebviewViewResolveContext, _token: vscode.CancellationToken) {
 		this._sidebarView = webviewView;
+		this._sidebarHasInteracted = false;
 		webviewView.webview.options = { enableScripts: true, localResourceRoots: [this._extensionUri] };
 		this._setupWebviewHandlers(webviewView.webview, false);
 
@@ -368,10 +384,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			const url = this._lastUrl;
 			const time = this._lastTime;
 			if (webviewView.visible && url) {
-				this.loadUrl(url, time, false, 'sidebar');
+				this.loadUrl(url, time, 'sidebar');
 			} else if (!webviewView.visible && url) {
 				void this._saveTimestamp(url, time);
-				if (this._tabPanel) this.loadUrl(url, time, false, 'tab');
+				if (this._tabPanel) this.loadUrl(url, time, 'tab');
 			}
 		});
 
@@ -380,8 +396,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		const lastUrl = this._lastUrl || this._getHistory()[0]?.url;
 		if (lastUrl) {
 			const startTime = this._lastTime || this._getTimestamp(lastUrl);
-			// Sidebar (view) should NEVER autoplay on initial restore/load
-			initialUrl = this._formatYoutubeUrl(lastUrl, startTime, false);
+			// Sidebar (view) interaction state decides initial autoplay
+			initialUrl = this._formatYoutubeUrl(lastUrl, startTime, this._sidebarHasInteracted);
 			initialOriginalUrl = lastUrl;
 			this._lastUrl = lastUrl;
 			this._lastTime = startTime;
@@ -419,6 +435,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'log': console.log(`[YOUTUBE_EXT][WEBVIEW] ${data.message}`, ...(data.args || [])); break;
 
 				case 'playbackStatus':
+					if (isTab) this._tabHasInteracted = true;
+					else this._sidebarHasInteracted = true;
+					
 					if (data.status === 'playing') {
 						this._isTabActive = isTab;
 						this.pauseAllExcept(isTab);
@@ -426,13 +445,22 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					break;
 				case 'timeUpdate': {
 					if (data.url && data.url !== this._lastUrl) return; // Drop updates from old videos
-					this._lastTime = data.time;
-					const vid = this._extractVideoId(this._lastUrl || '');
-					if (vid) this._timestampCache[vid] = data.time;
+					
+					// Only update session time if this view is current active one
+					if (isTab === this._isTabActive) {
+						this._lastTime = data.time;
+						const vid = this._extractVideoId(this._lastUrl || '');
+						if (vid) this._timestampCache[vid] = data.time;
+					}
 					break;
 				}
 				case 'saveTimestamp':
-					if (data.url && typeof data.time === 'number') await this._saveTimestamp(data.url, data.time);
+					if (data.url && typeof data.time === 'number') {
+						if (isTab === this._isTabActive) {
+							if (data.url === (this._lastUrl || '')) this._lastTime = data.time;
+							await this._saveTimestamp(data.url, data.time);
+						}
+					}
 					break;
 				case 'proxyLog': console.log(`[YOUTUBE_EXT][PROXY][${data.level}] ${data.message}`, ...(data.args || [])); break;
 				case 'requestLoad': {
@@ -473,8 +501,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					const nextId = await this._findNextVideo(data.videoId);
 					if (nextId) {
 						const nextUrl = `https://www.youtube.com/watch?v=${nextId}`;
-						const shouldAutoplay = data.manual !== false || this._getAutoplay();
-						await this._loadUrlTargeted(webview, isTab, nextUrl, 0, shouldAutoplay);
+						const settingAutoplay = this._getAutoplay();
+						if (data.manual || settingAutoplay) {
+							await this._loadUrlTargeted(webview, isTab, nextUrl, 0);
+						}
 					}
 					break;
 				}
@@ -483,13 +513,13 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						const nextId = await this._findNextVideo(data.videoId);
 						if (nextId) {
 							const nextUrl = `https://www.youtube.com/watch?v=${nextId}`;
-							await this._loadUrlTargeted(webview, isTab, nextUrl, 0, true);
+							await this._loadUrlTargeted(webview, isTab, nextUrl, 0);
 						}
 					}
 					break;
 				}
 				case 'setAutoplay': await this._state.update(YouTubeViewProvider.autoplayKey, !!data.value); this.postToAll({ type: 'autoplayUpdated', value: !!data.value }); break;
-				case 'openExternal': if (isTab) this.loadUrl(data.url, data.time, true, 'tab'); else { this.pause(); this.openInPanel(data.url, data.title, data.time); } break;
+				case 'openExternal': if (isTab) this.loadUrl(data.url, data.time, 'tab'); else { this.pause(); this.openInPanel(data.url, data.title, data.time); } break;
 				case 'urlSelected': void this._saveUrl(data.value); break;
 			}
 		});
