@@ -25,7 +25,7 @@ body {
 	position: absolute;
 	top: 0;
 	left: 0;
-	width: 440px;
+	width: calc(100% - 150px);
 	height: 60px;
 	z-index: 999;
 }
@@ -34,7 +34,7 @@ body {
 	position: absolute;
 	top: 0;
 	left: 0;
-	width: 440px;
+	width: calc(100% - 170px);
 	display: flex;
 	flex-direction: column;
 	padding: 8px 12px;
@@ -371,7 +371,7 @@ button:hover {
 	position: absolute;
 	top: 76px; /* Below header */
 	left: 0;
-	width: 440px;
+	width: calc(100% - 170px);
     bottom: 0;
 	background: rgba(20, 20, 20, 0.7);
     backdrop-filter: blur(20px);
