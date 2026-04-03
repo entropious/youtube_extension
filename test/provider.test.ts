@@ -152,5 +152,98 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         disposeHandler();
         expect(provider._tabPanel).to.be.undefined;
     });
+
+    describe('Loading and State Management', () => {
+        beforeEach(() => {
+            (global as any).fetch = sinon.stub();
+        });
+
+        afterEach(() => {
+            delete (global as any).fetch;
+        });
+
+        it('should resolve title and update history, favorites and webview title', async () => {
+            const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+            const title = 'Never Gonna Give You Up';
+            
+            (global.fetch as sinon.SinonStub).resolves({
+                ok: true,
+                json: async () => ({ title })
+            });
+
+            provider._lastUrl = url;
+            const panelWebview = createMockWebview();
+            const panel = createMockWebviewPanel(panelWebview);
+            provider._tabPanel = panel as any;
+
+            await provider._handleLoadRequest(url);
+
+            expect(provider._getHistory()[0].title).to.equal(title);
+            expect(panel.title).to.equal(title);
+        });
+
+        it('should save current timestamp to memento', async () => {
+            provider._lastUrl = 'https://youtube.com/watch?v=vid12345678'; // 11 chars
+            provider._lastTime = 150;
+            await provider.saveCurrentState();
+            const timestamps = memento.get<Record<string, any>>(YouTubeViewProvider.timestampsKey, {});
+            expect(timestamps['vid12345678'].time).to.equal(150);
+        });
+
+        it('should load last video without autoplay on restore', async () => {
+            const vid = 'dQw4w9WgXcQ';
+            await memento.update(YouTubeViewProvider.historyKey, [vid]);
+            await memento.update(YouTubeViewProvider.timestampsKey, { [vid]: { time: 50 } });
+            
+            const webview = createMockWebview();
+            const webviewView = createMockWebviewView(webview);
+            fsStub.withArgs(sinon.match(/index\.html/)).returns('<html>%%INITIAL_URL%%</html>');
+
+            provider.resolveWebviewView(webviewView as any, {} as any, {} as any);
+            expect(provider._lastUrl).to.equal(vid);
+            expect(provider._lastTime).to.equal(50);
+        });
+    });
+
+    describe('Webview Handlers', () => {
+        it('should drop timeUpdate from non-current video', async () => {
+            const webview = createMockWebview();
+            const view = createMockWebviewView(webview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+            const handler = webview.onDidReceiveMessage.getCall(0).args[0];
+            
+            provider._lastUrl = 'dQw4w9WgXcQ';
+            provider._lastTime = 0;
+            
+            await handler({ type: 'timeUpdate', url: 'anotherId123', time: 100 });
+            expect(provider._lastTime).to.equal(0);
+            
+            await handler({ type: 'timeUpdate', url: 'dQw4w9WgXcQ', time: 100 });
+            expect(provider._lastTime).to.equal(100);
+        });
+
+        it('should handle setAutoplay message', async () => {
+            const webview = createMockWebview();
+            const view = createMockWebviewView(webview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+            const handler = webview.onDidReceiveMessage.getCall(0).args[0];
+            
+            await handler({ type: 'setAutoplay', value: false });
+            expect(memento.get(YouTubeViewProvider.autoplayKey)).to.be.false;
+            expect(webview.postMessage.calledWith(sinon.match({ type: 'autoplayUpdated', value: false }))).to.be.true;
+        });
+
+        it('should handle openExternal message', async () => {
+            const webview = createMockWebview();
+            const view = createMockWebviewView(webview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+            const handler = webview.onDidReceiveMessage.getCall(0).args[0];
+            
+            const openInPanelSpy = sinon.spy(provider, 'openInPanel');
+            await handler({ type: 'openExternal', url: 'v1', title: 'T1', time: 50 });
+            expect(openInPanelSpy.calledWith('v1', 'T1', 50)).to.be.true;
+        });
+    });
 });
+
 
