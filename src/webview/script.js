@@ -30,7 +30,7 @@ const initialUrl = %%INITIAL_URL_JSON%%;
 const initialOriginalUrl = %%INITIAL_ORIGINAL_URL_JSON%%;
 const currentProxyPort = %%PROXY_PORT_JSON%%;
 const initialAutoplaySetting = %%AUTOPLAY_JSON%%;
-const initialHasPlaylist = %%INITIAL_HAS_PLAYLIST_JSON%%;
+const initialPlaylistId = %%INITIAL_PLAYLIST_ID_JSON%%;
 const initialCanPrev = %%INITIAL_CAN_PREV_JSON%%;
 
 const input = document.getElementById('url-input');
@@ -40,6 +40,7 @@ const prevBtn = document.getElementById('prev-btn');
 const openBtn = document.getElementById('open-btn');
 const historyBtn = document.getElementById('history-btn');
 const favoritesBtn = document.getElementById('favorites-btn');
+const playlistListBtn = document.getElementById('playlist-list-btn');
 const favCurrentBtn = document.getElementById('fav-current-btn');
 const iframe = document.getElementById('video-frame');
 const emptyState = document.getElementById('empty-state');
@@ -51,8 +52,10 @@ const header = document.querySelector('.header');
 
 let favorites = [];
 let currentListType = null;
+let currentPlaylistId = null;
 let pendingHistoryRequest = false;
 let pendingFavoritesRequest = false;
+let pendingPlaylistRequest = false;
 
 let currentVideoId = extractVideoId(initialUrl);
 let isPaused = false;
@@ -144,7 +147,8 @@ if (effectiveOriginalUrl) {
 }
 
 // Set initial playlist button states
-prevBtn.style.display = initialHasPlaylist ? 'flex' : 'none';
+prevBtn.style.display = initialPlaylistId ? 'flex' : 'none';
+playlistListBtn.style.display = initialPlaylistId ? 'flex' : 'none';
 prevBtn.disabled = !initialCanPrev;
 prevBtn.title = initialCanPrev ? "Previous (Playlist)" : "First Video (Playlist)";
 nextBtn.style.display = 'flex';
@@ -273,6 +277,16 @@ favoritesBtn.addEventListener('click', (e) => {
         pendingFavoritesRequest = true;
         log('Requesting favorites from extension');
         vscode.postMessage({ type: 'requestFavorites' });
+    }
+});
+
+playlistListBtn.addEventListener('click', (e) => {
+	e.stopPropagation();
+    if (currentListType === 'playlist' && resultsContainer.style.display !== 'none') {
+        closeList();
+    } else {
+        pendingPlaylistRequest = true;
+        vscode.postMessage({ type: 'requestPlaylist' });
     }
 });
 
@@ -525,7 +539,9 @@ window.addEventListener('message', event => {
 			isPaused = !startAutoplay;
 			
 			// Show/Hide and Disable/Enable Previous button
-			prevBtn.style.display = message.hasPlaylist ? 'flex' : 'none';
+			prevBtn.style.display = message.playlistId ? 'flex' : 'none';
+			playlistListBtn.style.display = message.playlistId ? 'flex' : 'none';
+			currentPlaylistId = message.playlistId;
 			prevBtn.disabled = !message.canPrev;
 			prevBtn.title = message.canPrev ? "Previous (Playlist)" : "First Video (Playlist)";
 			nextBtn.style.display = 'flex';
@@ -551,6 +567,12 @@ window.addEventListener('message', event => {
                 pendingFavoritesRequest = false;
             }
 			updateFavoriteButton();
+			break;
+		case 'playlist':
+			if (pendingPlaylistRequest || (currentListType === 'playlist' && resultsContainer.style.display !== 'none')) {
+				showPlaylist(message.value);
+				pendingPlaylistRequest = false;
+			}
 			break;
 		case 'autoplayUpdated':
 			autoplayCheck.checked = !!message.value;
@@ -673,7 +695,7 @@ function renderList(title, items, type, onClearAll) {
 				<div class="item-info">
 					<div class="item-title ${isCurrent ? 'current' : ''}">${itemTitle}</div>
 				</div>
-				${type !== 'search results' ? `<button class="item-remove-btn" title="Remove">✕</button>` : ''}
+				${(type !== 'search results' && type !== 'playlist') ? `<button class="item-remove-btn" title="Remove">✕</button>` : ''}
 			`;
 			
 			div.addEventListener('click', (e) => {
@@ -681,7 +703,7 @@ function renderList(title, items, type, onClearAll) {
 				loadVideo(linkUrl);
 			});
 
-			if (type !== 'search results') {
+			if (type !== 'search results' && type !== 'playlist') {
 				const removeBtn = div.querySelector('.item-remove-btn');
 				removeBtn.addEventListener('click', (e) => {
 					e.stopPropagation();
@@ -726,6 +748,10 @@ function showHistory(urls) {
 
 function showFavorites(urls) {
 	renderList('Favorites', urls, 'favorites');
+}
+
+function showPlaylist(urls) {
+	renderList('Playlist Videos', urls, 'playlist');
 }
 
 function isFavorited(url) {

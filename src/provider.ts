@@ -12,6 +12,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public static readonly autoplayKey = 'youtube-autoplay';
 	public static readonly playlistIdKey = 'youtube-playlist-id';
 	public static readonly playlistVideosKey = 'youtube-playlist-videos';
+	public static readonly playlistTitlesKey = 'youtube-playlist-titles';
 
 	private _sidebarView?: vscode.WebviewView;
 	public _tabPanel?: vscode.WebviewPanel;
@@ -22,6 +23,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	private _lastTime = 0;
 	private _timestampCache: Record<string, number> = {};
 	private _currentPlaylist: string[] = [];
+	private _playlistTitles: Record<string, string> = {};
 	private _playlistId?: string;
 
 	constructor(
@@ -31,6 +33,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	) { 
 		this._playlistId = this._state.get<string>(YouTubeViewProvider.playlistIdKey);
 		this._currentPlaylist = this._state.get<string[]>(YouTubeViewProvider.playlistVideosKey, []);
+		this._playlistTitles = this._state.get<Record<string, string>>(YouTubeViewProvider.playlistTitlesKey, {});
 	}
 
 	private postToAll(message: any) {
@@ -112,7 +115,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			startTime: startTime,
 			autoplay: hasInteracted,
 			targetView: targetView,
-			hasPlaylist: !!playlistId,
+			playlistId: playlistId,
 			canPrev: canPrev
 		};
 		if (targetView === 'tab' && this._tabPanel) {
@@ -152,7 +155,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			originalUrl: url,
 			startTime: finalStartTime,
 			autoplay: hasInteracted,
-			hasPlaylist: !!playlistId,
+			playlistId: playlistId,
 			canPrev: canPrev
 		});
 	}
@@ -184,11 +187,14 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			this._currentPlaylist = await this._fetchPlaylist(playlistId);
 			await this._state.update(YouTubeViewProvider.playlistIdKey, this._playlistId);
 			await this._state.update(YouTubeViewProvider.playlistVideosKey, this._currentPlaylist);
+			await this._state.update(YouTubeViewProvider.playlistTitlesKey, this._playlistTitles);
 		} else if (!playlistId && this._playlistId) {
 			this._playlistId = undefined;
 			this._currentPlaylist = [];
+			this._playlistTitles = {};
 			await this._state.update(YouTubeViewProvider.playlistIdKey, undefined);
 			await this._state.update(YouTubeViewProvider.playlistVideosKey, undefined);
+			await this._state.update(YouTubeViewProvider.playlistTitlesKey, undefined);
 		}
 
 		// Immediately save/bubble up the URL in history (preserving any existing title)
@@ -370,16 +376,17 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			const clientVersion = clientVersionMatch ? clientVersionMatch[1] : '2.20240320.01.00';
 
 			const processData = (data: any) => {
-				// This is a bit of a "deep dive" into YouTube's JSON structure
-				// We'll use a broad search for videoId but also look for continuation tokens
 				const jsonStr = JSON.stringify(data);
-				const idMatches = jsonStr.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g);
-				for (const m of idMatches) {
-					allIds.push(m[1]);
+				// One simple pass to get both ID and Title from playlist items
+				const matches = jsonStr.matchAll(/"playlistVideoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"\}\]/g);
+				
+				for (const m of matches) {
+					const id = m[1];
+					const title = m[2].replace(/\\u0026/g, '&');
+					allIds.push(id);
+					this._playlistTitles[id] = title;
 				}
 
-				// Find continuation token
-				// Structure: ... "continuationItemRenderer": { "continuationEndpoint": { "continuationCommand": { "token": "..." } } }
 				const tokenMatch = jsonStr.match(/"continuationCommand":\{"token":"(.*?)"/);
 				return tokenMatch ? tokenMatch[1] : undefined;
 			};
@@ -394,18 +401,13 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 			// 2. Fetch continuations if they exist and we have the API key
 			let safetyCounter = 0;
-			while (continuationToken && apiKey && safetyCounter < 20) { // Limit to ~2000 videos
+			while (continuationToken && apiKey && safetyCounter < 10) {
 				safetyCounter++;
 				try {
 					const response = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${apiKey}`, {
 						method: 'POST',
 						body: JSON.stringify({
-							context: {
-								client: {
-									clientName: 'WEB',
-									clientVersion: clientVersion
-								}
-							},
+							context: { client: { clientName: 'WEB', clientVersion: clientVersion } },
 							continuation: continuationToken
 						}),
 						headers: { 'Content-Type': 'application/json' }
@@ -536,10 +538,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 		
 		const videoId = extractVideoId(url) || '';
-		const hasPlaylist = !!extractPlaylistId(url);
-		const canPrev = hasPlaylist && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0;
+		const playlistId = extractPlaylistId(url);
+		const canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
 
-		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, this._tabHasInteracted), url, { hasPlaylist, canPrev });
+		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, this._tabHasInteracted), url, { playlistId, canPrev });
 		this._setupWebviewHandlers(panel.webview, true);
 
 		panel.onDidDispose(() => {
@@ -595,7 +597,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 		let initialUrl = 'about:blank';
 		let initialOriginalUrl = '';
-		let hasPlaylist = false;
+		let playlistId: string | undefined;
 		let canPrev = false;
 
 		const lastUrl = this._lastUrl || this._getHistory()[0]?.url;
@@ -608,16 +610,16 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			this._lastTime = startTime;
 			
 			const videoId = extractVideoId(lastUrl) || '';
-			hasPlaylist = !!extractPlaylistId(lastUrl);
-			canPrev = hasPlaylist && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0;
+			playlistId = extractPlaylistId(lastUrl);
+			canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
 
 			// Trigger a background load request to ensure playlist and history/titles are restored/synced
 			void this._handleLoadRequest(lastUrl);
 		}
-		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl, { hasPlaylist, canPrev });
+		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl, { playlistId, canPrev });
 	}
 
-	private _getHtmlForWebview(initialUrl = 'about:blank', initialOriginalUrl = '', options: { hasPlaylist?: boolean, canPrev?: boolean } = {}) {
+	private _getHtmlForWebview(initialUrl = 'about:blank', initialOriginalUrl = '', options: { playlistId?: string, canPrev?: boolean } = {}) {
 		try {
 			const webviewPath = path.join(this._extensionUri.fsPath, 'src', 'webview');
 			const html = fs.readFileSync(path.join(webviewPath, 'index.html'), 'utf8');
@@ -629,7 +631,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				.replace('%%INITIAL_ORIGINAL_URL_JSON%%', JSON.stringify(initialOriginalUrl))
 				.replace('%%PROXY_PORT_JSON%%', JSON.stringify(this._getProxyPort()))
 				.replace('%%AUTOPLAY_JSON%%', JSON.stringify(this._getAutoplay()))
-				.replace('%%INITIAL_HAS_PLAYLIST_JSON%%', JSON.stringify(!!options.hasPlaylist))
+				.replace('%%INITIAL_PLAYLIST_ID_JSON%%', JSON.stringify(options.playlistId || null))
 				.replace('%%INITIAL_CAN_PREV_JSON%%', JSON.stringify(!!options.canPrev));
 
 			return html
@@ -743,6 +745,15 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'setAutoplay': await this._state.update(YouTubeViewProvider.autoplayKey, !!data.value); this.postToAll({ type: 'autoplayUpdated', value: !!data.value }); break;
 				case 'openExternal': if (isTab) this.loadUrl(data.url, data.time, 'tab'); else { this.pause(); this.openInPanel(data.url, data.title, data.time); } break;
 				case 'urlSelected': void this._saveUrl(data.value); break;
+				case 'requestPlaylist':
+					if (this._playlistId) {
+						const playlistEntries = this._currentPlaylist.map(id => ({
+							url: `https://www.youtube.com/watch?v=${id}&list=${this._playlistId}`,
+							title: this._playlistTitles[id]
+						}));
+						webview.postMessage({ type: 'playlist', value: playlistEntries });
+					}
+					break;
 			}
 		});
 	}
