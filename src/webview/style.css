@@ -134,7 +134,7 @@ button:hover {
 	background: var(--vscode-button-hoverBackground);
 }
 
-#history-btn, #favorites-btn {
+#history-btn, #favorites-btn, #playlist-list-btn {
 	background: transparent;
 	font-size: 14px;
 	padding: 0 4px;
@@ -142,7 +142,7 @@ button:hover {
     border: none;
 }
 
-#history-btn:hover, #favorites-btn:hover {
+#history-btn:hover, #favorites-btn:hover, #playlist-list-btn:hover {
 	color: #fff;
     background: transparent;
 }
