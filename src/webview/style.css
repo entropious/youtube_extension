@@ -147,7 +147,7 @@ button:hover {
     background: transparent;
 }
 
-#fav-current-btn, #next-btn, #open-btn, #close-list-btn {
+#fav-current-btn, #prev-btn, #next-btn, #open-btn, #close-list-btn {
 	background: rgba(255, 255, 255, 0.08);
 	color: #ccc;
     font-size: 14px;
@@ -160,6 +160,12 @@ button:hover {
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     cursor: pointer;
+}
+
+#prev-btn:disabled {
+    opacity: 0.3 !important;
+    cursor: default;
+    pointer-events: none;
 }
 
 #close-list-btn {
@@ -390,7 +396,7 @@ button:hover {
 }
 
 /* Helper for fav-current-btn interactivity */
-#fav-current-btn:hover, #next-btn:hover, #open-btn:hover {
+#fav-current-btn:hover, #prev-btn:hover, #next-btn:hover, #open-btn:hover {
 	color: #fff;
     background: rgba(255, 255, 255, 0.15);
 }

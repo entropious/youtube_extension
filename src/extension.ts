@@ -267,6 +267,12 @@ export async function activate(context: vscode.ExtensionContext) {
 			provider?.nextVideo();
 		})
 	);
+	
+	context.subscriptions.push(
+		vscode.commands.registerCommand('youtube-panel.prevVideo', () => {
+			provider?.prevVideo();
+		})
+	);
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('youtube-panel.openInPanel', (url: string, title?: string, startTime?: number) => {

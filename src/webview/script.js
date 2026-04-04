@@ -34,6 +34,7 @@ const initialAutoplaySetting = %%AUTOPLAY_JSON%%;
 const input = document.getElementById('url-input');
 const clearBtn = document.getElementById('clear-btn');
 const nextBtn = document.getElementById('next-btn');
+const prevBtn = document.getElementById('prev-btn');
 const openBtn = document.getElementById('open-btn');
 const historyBtn = document.getElementById('history-btn');
 const favoritesBtn = document.getElementById('favorites-btn');
@@ -150,6 +151,7 @@ if (effectiveUrl && effectiveUrl !== 'about:blank') {
 	emptyState.style.display = 'flex';
 	statusText.textContent = 'Ready';
 	currentVideoId = '';
+	prevBtn.style.display = 'none';
 	setTimeout(() => emptyUrlInput.focus(), 100);
 }
 
@@ -221,6 +223,10 @@ emptyUrlBtn.addEventListener('click', () => {
 
 nextBtn.addEventListener('click', () => {
 	requestNext(true);
+});
+
+prevBtn.addEventListener('click', () => {
+	requestPrev();
 });
 
 openBtn.addEventListener('click', () => {
@@ -503,8 +509,12 @@ window.addEventListener('message', event => {
 			emptyState.style.display = 'none';
 			statusText.textContent = 'Loading...';
 			isPaused = !startAutoplay;
-
 			
+			// Show/Hide and Disable/Enable Previous button
+			prevBtn.style.display = message.hasPlaylist ? 'flex' : 'none';
+			prevBtn.disabled = !message.canPrev;
+			prevBtn.title = message.canPrev ? "Previous (Playlist)" : "First Video (Playlist)";
+
 			updateFavoriteButton();
 			break;
 
@@ -541,6 +551,9 @@ window.addEventListener('message', event => {
 		case 'nextVideo':
 			requestNext(true);
 			break;
+		case 'prevVideo':
+			requestPrev();
+			break;
 		case 'stateCleared':
 			log('State cleared by extension');
 			lastLoadedUrl = 'about:blank';
@@ -553,6 +566,7 @@ window.addEventListener('message', event => {
 			emptyState.style.display = 'flex';
 			statusText.textContent = 'Ready';
 			clearBtn.style.display = 'none';
+			prevBtn.style.display = 'none';
 			saveState();
 			setTimeout(() => emptyUrlInput.focus(), 100);
 			break;
@@ -567,6 +581,16 @@ function requestNext(force = false) {
 			type: 'requestNextVideo', 
 			videoId: currentVideoId,
 			manual: !!force
+		});
+	}
+}
+
+function requestPrev() {
+	if (currentVideoId) {
+		statusText.textContent = 'Finding previous...';
+		vscode.postMessage({ 
+			type: 'requestPrevVideo', 
+			videoId: currentVideoId
 		});
 	}
 }
