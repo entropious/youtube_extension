@@ -30,6 +30,8 @@ const initialUrl = %%INITIAL_URL_JSON%%;
 const initialOriginalUrl = %%INITIAL_ORIGINAL_URL_JSON%%;
 const currentProxyPort = %%PROXY_PORT_JSON%%;
 const initialAutoplaySetting = %%AUTOPLAY_JSON%%;
+const initialHasPlaylist = %%INITIAL_HAS_PLAYLIST_JSON%%;
+const initialCanPrev = %%INITIAL_CAN_PREV_JSON%%;
 
 const input = document.getElementById('url-input');
 const clearBtn = document.getElementById('clear-btn');
@@ -141,17 +143,29 @@ if (effectiveOriginalUrl) {
 	clearBtn.style.display = 'block';
 }
 
+// Set initial playlist button states
+prevBtn.style.display = initialHasPlaylist ? 'flex' : 'none';
+prevBtn.disabled = !initialCanPrev;
+prevBtn.title = initialCanPrev ? "Previous (Playlist)" : "First Video (Playlist)";
+nextBtn.style.display = 'flex';
+openBtn.style.display = 'flex';
+
 if (effectiveUrl && effectiveUrl !== 'about:blank') {
 	iframe.src = effectiveUrl;
 	emptyState.style.display = 'none';
 	statusText.textContent = 'Loading...';
 	currentVideoId = extractVideoId(effectiveUrl);
+    nextBtn.style.display = 'flex';
+    openBtn.style.display = 'flex';
 } else {
 	iframe.src = 'about:blank';
 	emptyState.style.display = 'flex';
 	statusText.textContent = 'Ready';
 	currentVideoId = '';
 	prevBtn.style.display = 'none';
+    favCurrentBtn.style.display = 'none';
+    nextBtn.style.display = 'none';
+    openBtn.style.display = 'none';
 	setTimeout(() => emptyUrlInput.focus(), 100);
 }
 
@@ -514,6 +528,8 @@ window.addEventListener('message', event => {
 			prevBtn.style.display = message.hasPlaylist ? 'flex' : 'none';
 			prevBtn.disabled = !message.canPrev;
 			prevBtn.title = message.canPrev ? "Previous (Playlist)" : "First Video (Playlist)";
+			nextBtn.style.display = 'flex';
+			openBtn.style.display = 'flex';
 
 			updateFavoriteButton();
 			break;
