@@ -167,6 +167,7 @@ if (effectiveUrl && effectiveUrl !== 'about:blank') {
 	statusText.textContent = 'Ready';
 	currentVideoId = '';
 	prevBtn.style.display = 'none';
+	playlistListBtn.style.display = 'none';
     favCurrentBtn.style.display = 'none';
     nextBtn.style.display = 'none';
     openBtn.style.display = 'none';

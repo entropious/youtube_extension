@@ -106,7 +106,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		const formattedUrl = this._formatYoutubeUrl(url, startTime, hasInteracted);
 		const playlistId = extractPlaylistId(url);
 		const videoId = extractVideoId(url) || '';
-		const canPrev = this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0;
+		
+		this._syncPlaylistState(playlistId);
+		const canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
 		
 		const message = {
 			type: 'loadUrl',
@@ -147,7 +149,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		const formattedUrl = this._formatYoutubeUrl(url, finalStartTime, hasInteracted);
 		const playlistId = extractPlaylistId(url);
 		const videoId = extractVideoId(url) || '';
-		const canPrev = this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0;
+		
+		this._syncPlaylistState(playlistId);
+		const canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
 
 		webview.postMessage({
 			type: 'loadUrl',
@@ -539,6 +543,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		
 		const videoId = extractVideoId(url) || '';
 		const playlistId = extractPlaylistId(url);
+		
+		this._syncPlaylistState(playlistId);
 		const canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
 
 		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, this._tabHasInteracted), url, { playlistId, canPrev });
@@ -611,6 +617,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			
 			const videoId = extractVideoId(lastUrl) || '';
 			playlistId = extractPlaylistId(lastUrl);
+
+			this._syncPlaylistState(playlistId);
 			canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
 
 			// Trigger a background load request to ensure playlist and history/titles are restored/synced
@@ -760,5 +768,16 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	private _getAutoplay(): boolean {
 		return this._state.get<boolean>(YouTubeViewProvider.autoplayKey, true);
+	}
+
+	private _syncPlaylistState(playlistId: string | undefined) {
+		if (!playlistId) {
+			this._playlistId = undefined;
+			this._currentPlaylist = [];
+			this._playlistTitles = {};
+		} else if (playlistId !== this._playlistId) {
+			this._currentPlaylist = [];
+			this._playlistTitles = {};
+		}
 	}
 }
