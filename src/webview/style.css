@@ -136,10 +136,12 @@ button:hover {
 
 #history-btn, #favorites-btn, #playlist-list-btn {
 	background: transparent;
-	font-size: 14px;
-	padding: 0 4px;
+	padding: 0 6px;
 	color: #aaa;
     border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 #history-btn:hover, #favorites-btn:hover, #playlist-list-btn:hover {
@@ -375,7 +377,7 @@ button:hover {
 .results-container {
 	display: none;
 	position: absolute;
-	top: 76px; /* Below header */
+	top: 72px; /* Set to match header height + shadow safety */
 	left: 0;
 	width: min(100%, max(400px, calc(100% - 170px)));
     bottom: 0;
@@ -407,7 +409,16 @@ button:hover {
 
 #fav-current-btn.active {
 	color: #ffcc00;
-	text-shadow: 0 0 8px rgba(255, 204, 0, 0.4);
+}
+
+#fav-current-btn.active svg {
+    fill: #ffcc00;
+    stroke: #ffcc00;
+    filter: drop-shadow(0 0 4px rgba(255, 204, 0, 0.4));
+}
+
+#fav-current-btn svg {
+    transform: translateX(1px);
 }
 
 .player-container {

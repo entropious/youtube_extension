@@ -332,7 +332,7 @@ document.addEventListener('click', () => {
 
 resultsContainer.addEventListener('mouseleave', (e) => {
     if (currentListType && currentListType !== 'search results') {
-        // If moving to the header area (top: 0 to top: 76px), let's see if we should close
+        // If moving to the header area (top: 0 to top: 72px), let's see if we should close
         // But maybe it's simpler to just close it as requested
         closeList();
     }
@@ -766,7 +766,7 @@ function updateFavoriteButton() {
         favCurrentBtn.style.display = 'none';
         return;
     }
-    favCurrentBtn.style.display = 'block';
+    favCurrentBtn.style.display = 'flex';
     const isFav = isFavorited(lastLoadedOriginalUrl);
 
     if (isFav) {
