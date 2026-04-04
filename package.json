@@ -1,7 +1,7 @@
 {
   "name": "youtube-panel",
   "displayName": "YouTube Panel",
-  "description": "The ultimate YouTube companion for VS Code with sidebar & tab views, built-in search, history, favorites, smart resume, and global media controls.",
+  "description": "The ultimate YouTube companion for VS Code with sidebar & tab views, built-in search, history, favorites, smart resume, playlists, and global media controls.",
   "version": "0.2.3",
   "publisher": "entro",
   "license": "MIT",
@@ -60,6 +60,11 @@
         "category": "YouTube"
       },
       {
+        "command": "youtube-panel.prevVideo",
+        "title": "YouTube: Prev Video",
+        "category": "YouTube"
+      },
+      {
         "command": "youtube-panel.clearAll",
         "title": "YouTube Panel: Clear All",
         "category": "YouTube"
@@ -80,6 +85,14 @@
         "mac": "cmd+alt+o",
         "linux": "ctrl+alt+o",
         "win": "ctrl+alt+o",
+        "when": "view.youtube-panel.view.visible"
+      },
+      {
+        "command": "youtube-panel.prevVideo",
+        "key": "cmd+alt+i",
+        "mac": "cmd+alt+i",
+        "linux": "ctrl+alt+i",
+        "win": "ctrl+alt+i",
         "when": "view.youtube-panel.view.visible"
       }
     ]
