@@ -12,6 +12,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public static readonly favoritesKey = 'youtube-favorites';
 	public static readonly timestampsKey = 'youtube-timestamps';
 	public static readonly autoplayKey = 'youtube-autoplay';
+	public static readonly playlistIdKey = 'youtube-playlist-id';
+	public static readonly playlistVideosKey = 'youtube-playlist-videos';
 
 	private _sidebarView?: vscode.WebviewView;
 	public _tabPanel?: vscode.WebviewPanel;
@@ -28,7 +30,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		private readonly _extensionUri: vscode.Uri,
 		private readonly _state: vscode.Memento,
 		private readonly _getProxyPort: () => number
-	) { }
+	) { 
+		this._playlistId = this._state.get<string>(YouTubeViewProvider.playlistIdKey);
+		this._currentPlaylist = this._state.get<string[]>(YouTubeViewProvider.playlistVideosKey, []);
+	}
 
 	private postToAll(message: any) {
 		if (this._tabPanel) this._tabPanel.webview.postMessage(message);
@@ -179,9 +184,13 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		if (playlistId && playlistId !== this._playlistId) {
 			this._playlistId = playlistId;
 			this._currentPlaylist = await this._fetchPlaylist(playlistId);
-		} else if (!playlistId) {
+			await this._state.update(YouTubeViewProvider.playlistIdKey, this._playlistId);
+			await this._state.update(YouTubeViewProvider.playlistVideosKey, this._currentPlaylist);
+		} else if (!playlistId && this._playlistId) {
 			this._playlistId = undefined;
 			this._currentPlaylist = [];
+			await this._state.update(YouTubeViewProvider.playlistIdKey, undefined);
+			await this._state.update(YouTubeViewProvider.playlistVideosKey, undefined);
 		}
 
 		// Immediately save/bubble up the URL in history (preserving any existing title)
@@ -252,6 +261,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._lastUrl = undefined;
 		this._lastTime = 0;
 		this._timestampCache = {};
+		this._playlistId = undefined;
+		this._currentPlaylist = [];
+		await this._state.update(YouTubeViewProvider.playlistIdKey, undefined);
+		await this._state.update(YouTubeViewProvider.playlistVideosKey, undefined);
 		
 		const message = { type: 'stateCleared' };
 		if (this._sidebarView) {
@@ -520,9 +533,15 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._tabPanel = panel;
 		// Keep interaction state if it was already set (e.g. when moving from sidebar)
 		this._tabHasInteracted = this._tabHasInteracted || false;
-		this._lastUrl = url;
-		this._lastTime = startTime || 0;
-		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, this._tabHasInteracted), url);
+		if (url && url !== 'about:blank') {
+			void this._handleLoadRequest(url);
+		}
+		
+		const videoId = extractVideoId(url) || '';
+		const hasPlaylist = !!extractPlaylistId(url);
+		const canPrev = hasPlaylist && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0;
+
+		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, this._tabHasInteracted), url, { hasPlaylist, canPrev });
 		this._setupWebviewHandlers(panel.webview, true);
 
 		panel.onDidDispose(() => {
@@ -578,6 +597,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 		let initialUrl = 'about:blank';
 		let initialOriginalUrl = '';
+		let hasPlaylist = false;
+		let canPrev = false;
+
 		const lastUrl = this._lastUrl || this._getHistory()[0]?.url;
 		if (lastUrl) {
 			const startTime = this._lastTime || this._getTimestamp(lastUrl);
@@ -586,11 +608,18 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			initialOriginalUrl = lastUrl;
 			this._lastUrl = lastUrl;
 			this._lastTime = startTime;
+			
+			const videoId = extractVideoId(lastUrl) || '';
+			hasPlaylist = !!extractPlaylistId(lastUrl);
+			canPrev = hasPlaylist && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0;
+
+			// Trigger a background load request to ensure playlist and history/titles are restored/synced
+			void this._handleLoadRequest(lastUrl);
 		}
-		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl);
+		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl, { hasPlaylist, canPrev });
 	}
 
-	private _getHtmlForWebview(initialUrl = 'about:blank', initialOriginalUrl = '') {
+	private _getHtmlForWebview(initialUrl = 'about:blank', initialOriginalUrl = '', options: { hasPlaylist?: boolean, canPrev?: boolean } = {}) {
 		try {
 			const webviewPath = path.join(this._extensionUri.fsPath, 'src', 'webview');
 			const html = fs.readFileSync(path.join(webviewPath, 'index.html'), 'utf8');
@@ -601,7 +630,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				.replace('%%INITIAL_URL_JSON%%', JSON.stringify(initialUrl))
 				.replace('%%INITIAL_ORIGINAL_URL_JSON%%', JSON.stringify(initialOriginalUrl))
 				.replace('%%PROXY_PORT_JSON%%', JSON.stringify(this._getProxyPort()))
-				.replace('%%AUTOPLAY_JSON%%', JSON.stringify(this._getAutoplay()));
+				.replace('%%AUTOPLAY_JSON%%', JSON.stringify(this._getAutoplay()))
+				.replace('%%INITIAL_HAS_PLAYLIST_JSON%%', JSON.stringify(!!options.hasPlaylist))
+				.replace('%%INITIAL_CAN_PREV_JSON%%', JSON.stringify(!!options.canPrev));
 
 			return html
 				.replace('%%CSP%%', "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-src http://127.0.0.1:* https://www.youtube.com https://youtube.com;")
