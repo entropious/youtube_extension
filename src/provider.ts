@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { HistoryEntry, extractVideoId, formatYoutubeUrl, parseEntries } from './utils';
+import { HistoryEntry, extractVideoId, extractPlaylistId, formatYoutubeUrl, parseEntries } from './utils';
 
 // TODO: Add playlist support
 
@@ -19,8 +19,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	private _sidebarHasInteracted = false;
 	private _tabHasInteracted = false;
 	public _lastUrl?: string;
-	public _lastTime = 0;
+	private _lastTime = 0;
 	private _timestampCache: Record<string, number> = {};
+	private _currentPlaylist: string[] = [];
+	private _playlistId?: string;
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
@@ -65,6 +67,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this.postToActive({ type: 'nextVideo' });
 	}
 
+	public prevVideo() {
+		this.postToActive({ type: 'prevVideo' });
+	}
+
 	public async saveCurrentState(): Promise<void> {
 		if (this._lastUrl) {
 			await this._saveTimestamp(this._lastUrl, this._lastTime, true);
@@ -92,6 +98,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 
 		const formattedUrl = this._formatYoutubeUrl(url, startTime, hasInteracted);
+		const playlistId = extractPlaylistId(url);
+		const videoId = extractVideoId(url) || '';
+		const canPrev = this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0;
 		
 		const message = {
 			type: 'loadUrl',
@@ -99,7 +108,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			originalUrl: url,
 			startTime: startTime,
 			autoplay: hasInteracted,
-			targetView: targetView
+			targetView: targetView,
+			hasPlaylist: !!playlistId,
+			canPrev: canPrev
 		};
 		if (targetView === 'tab' && this._tabPanel) {
 			this._tabPanel.webview.postMessage(message);
@@ -128,12 +139,18 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		const hasInteracted = isTab ? this._tabHasInteracted : this._sidebarHasInteracted;
 
 		const formattedUrl = this._formatYoutubeUrl(url, finalStartTime, hasInteracted);
+		const playlistId = extractPlaylistId(url);
+		const videoId = extractVideoId(url) || '';
+		const canPrev = this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0;
+
 		webview.postMessage({
 			type: 'loadUrl',
 			value: formattedUrl,
 			originalUrl: url,
 			startTime: finalStartTime,
-			autoplay: hasInteracted
+			autoplay: hasInteracted,
+			hasPlaylist: !!playlistId,
+			canPrev: canPrev
 		});
 	}
 
@@ -157,6 +174,16 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	public async _handleLoadRequest(url: string): Promise<void> {
+		// Detect playlist
+		const playlistId = extractPlaylistId(url);
+		if (playlistId && playlistId !== this._playlistId) {
+			this._playlistId = playlistId;
+			this._currentPlaylist = await this._fetchPlaylist(playlistId);
+		} else if (!playlistId) {
+			this._playlistId = undefined;
+			this._currentPlaylist = [];
+		}
+
 		// Immediately save/bubble up the URL in history (preserving any existing title)
 		await this._saveUrl(url);
 
@@ -308,6 +335,88 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		} catch { return []; }
 	}
 
+	private async _fetchPlaylist(playlistId: string): Promise<string[]> {
+		try {
+			const res = await fetch(`https://www.youtube.com/playlist?list=${playlistId}`, {
+				headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
+			});
+			const text = await res.text();
+			
+			// 1. Extract Initial Data and Config
+			const initialDataMatch = text.match(/var ytInitialData = (.*?);<\/script>/);
+			const apiKeyMatch = text.match(/"INNERTUBE_API_KEY":"(.*?)"/);
+			const clientVersionMatch = text.match(/"clientVersion":"(.*?)"/);
+			
+			if (!initialDataMatch) {
+				// Fallback to simple regex if JSON not found
+				const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g);
+				return [...new Set(Array.from(matches).map(m => m[1]))];
+			}
+
+			let allIds: string[] = [];
+			let continuationToken: string | undefined;
+			const apiKey = apiKeyMatch ? apiKeyMatch[1] : '';
+			const clientVersion = clientVersionMatch ? clientVersionMatch[1] : '2.20240320.01.00';
+
+			const processData = (data: any) => {
+				// This is a bit of a "deep dive" into YouTube's JSON structure
+				// We'll use a broad search for videoId but also look for continuation tokens
+				const jsonStr = JSON.stringify(data);
+				const idMatches = jsonStr.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g);
+				for (const m of idMatches) {
+					allIds.push(m[1]);
+				}
+
+				// Find continuation token
+				// Structure: ... "continuationItemRenderer": { "continuationEndpoint": { "continuationCommand": { "token": "..." } } }
+				const tokenMatch = jsonStr.match(/"continuationCommand":\{"token":"(.*?)"/);
+				return tokenMatch ? tokenMatch[1] : undefined;
+			};
+
+			try {
+				const data = JSON.parse(initialDataMatch[1]);
+				continuationToken = processData(data);
+				allIds = [...new Set(allIds)]; // Initial dedup
+			} catch (e) {
+				console.error('Error parsing ytInitialData:', e);
+			}
+
+			// 2. Fetch continuations if they exist and we have the API key
+			let safetyCounter = 0;
+			while (continuationToken && apiKey && safetyCounter < 20) { // Limit to ~2000 videos
+				safetyCounter++;
+				try {
+					const response = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${apiKey}`, {
+						method: 'POST',
+						body: JSON.stringify({
+							context: {
+								client: {
+									clientName: 'WEB',
+									clientVersion: clientVersion
+								}
+							},
+							continuation: continuationToken
+						}),
+						headers: { 'Content-Type': 'application/json' }
+					});
+
+					if (!response.ok) break;
+					const data = await response.json();
+					continuationToken = processData(data);
+					allIds = [...new Set(allIds)]; // Keep it unique
+				} catch (err) {
+					console.error('Error fetching continuation:', err);
+					break;
+				}
+			}
+
+			return allIds;
+		} catch (e) { 
+			console.error('Playlist fetch failed:', e);
+			return []; 
+		}
+	}
+
 	private async _searchVideos(query: string): Promise<{id: string, title: string, thumbnail: string}[]> {
 		try {
 			const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`);
@@ -353,9 +462,26 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	public async _findNextVideo(currentId: string): Promise<string | undefined> {
+		if (this._currentPlaylist.length > 0) {
+			const idx = this._currentPlaylist.indexOf(currentId);
+			if (idx !== -1 && idx < this._currentPlaylist.length - 1) {
+				return this._currentPlaylist[idx + 1];
+			}
+		}
+		
 		const ids = await this._fetchRelated(currentId);
 		const filtered = ids.filter(id => id !== currentId);
 		return filtered[Math.floor(Math.random() * Math.min(filtered.length, 5))];
+	}
+
+	public async _findPrevVideo(currentId: string): Promise<string | undefined> {
+		if (this._currentPlaylist.length > 0) {
+			const idx = this._currentPlaylist.indexOf(currentId);
+			if (idx > 0) {
+				return this._currentPlaylist[idx - 1];
+			}
+		}
+		return undefined;
 	}
 
 	public openInPanel(url: string, title?: string, startTime?: number) {
@@ -559,7 +685,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'requestNextVideo': {
 					const nextId = await this._findNextVideo(data.videoId);
 					if (nextId) {
-						const nextUrl = `https://www.youtube.com/watch?v=${nextId}`;
+						const nextUrl = `https://www.youtube.com/watch?v=${nextId}${this._playlistId ? `&list=${this._playlistId}` : ''}`;
 						const settingAutoplay = this._getAutoplay();
 						if (data.manual || settingAutoplay) {
 							await this._loadUrlTargeted(webview, isTab, nextUrl, 0);
@@ -567,11 +693,19 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					}
 					break;
 				}
+				case 'requestPrevVideo': {
+					const prevId = await this._findPrevVideo(data.videoId);
+					if (prevId) {
+						const prevUrl = `https://www.youtube.com/watch?v=${prevId}${this._playlistId ? `&list=${this._playlistId}` : ''}`;
+						await this._loadUrlTargeted(webview, isTab, prevUrl, 0);
+					}
+					break;
+				}
 				case 'videoEnded': {
 					if (this._getAutoplay()) {
 						const nextId = await this._findNextVideo(data.videoId);
 						if (nextId) {
-							const nextUrl = `https://www.youtube.com/watch?v=${nextId}`;
+							const nextUrl = `https://www.youtube.com/watch?v=${nextId}${this._playlistId ? `&list=${this._playlistId}` : ''}`;
 							await this._loadUrlTargeted(webview, isTab, nextUrl, 0);
 						}
 					}

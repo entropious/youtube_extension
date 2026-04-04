@@ -19,11 +19,27 @@ export function extractVideoId(urlStr: string): string | undefined {
 			if (parsed.pathname === '/watch') return parsed.searchParams.get('v') || undefined;
 			if (parsed.pathname.startsWith('/shorts/')) return parsed.pathname.split('/').filter(Boolean)[1];
 			if (parsed.pathname.startsWith('/embed/')) return parsed.pathname.split('/').filter(Boolean)[1];
+			// Also check for v= in other pages if applicable
+			const v = parsed.searchParams.get('v');
+			if (v) return v;
 		}
 	} catch {
-		if (/^[a-zA-Z0-9_-]{11}$/.test(urlStr)) return urlStr;
+		const match = urlStr.match(/[a-zA-Z0-9_-]{11}/);
+		if (match) return match[0];
 	}
 	return undefined;
+}
+
+/**
+ * Extracts a playlist ID from YouTube URL formats.
+ */
+export function extractPlaylistId(urlStr: string): string | undefined {
+	try {
+		const parsed = new URL(urlStr);
+		return parsed.searchParams.get('list') || undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /**
