@@ -12,9 +12,10 @@ Experience YouTube like never before, right from your editor! Watch tutorials, l
 - 🚀 **Dual-View Support**: Watch videos in a dedicated **Sidebar Panel** or open them in a large **Editor Tab** for better visibility.
 - 🔍 **Integrated Search**: Find and browse videos directly within the extension UI — no more switching windows to find the right tutorial.
 - 🔗 **Smart Link Support**: Paste any YouTube link into the search bar to play it instantly.
+- 🎶 **Playlists Support**: Seamlessly manage YouTube playlists with intuitive navigation controls and full state recovery across restarts.
 - 🕒 **Smart Resume (Timestamps)**: Remembers your playback position for every video. Resume exactly where you left off, even after restarting VS Code.
-- 🔄 **Continuous Play & Related Videos**: Discover and autoplay related content when a video ends — perfect for keeping the flow in your workspace.
 - ⭐ **Favorites & History**: Save your go-to tutorials or lofi playlists in **Favorites**, and easily re-watch anything from your **History** (up to 50 items).
+- 🔄 **Continuous Play & Related Videos**: Discover and autoplay related content when a video ends — perfect for keeping the flow in your workspace.
 - ⚡ **Global Media Controls**: Play, pause, or skip to the next video using global commands and customizable keyboard shortcuts (`cmd+alt+p`, `cmd+alt+o`).
 - 🛠️ **Seamless Syncing**: Switch between the sidebar and editor tab; your video and playback position sync automatically.
 - 🧬 **Deeplink Support**: Open videos from your browser or other apps using \`vscode://\` (e.g., \`vscode://entro.youtube-panel/load?url=URL&t=120\`).
@@ -38,6 +39,7 @@ Experience YouTube like never before, right from your editor! Watch tutorials, l
 | `YouTube: Load URL` | Search for videos or play a specific URL. | - |
 | `YouTube: Play/Pause` | Toggle playback of the active player. | `cmd+alt+p` |
 | `YouTube: Next Video` | Skip to the next related video. | `cmd+alt+o` |
+| `YouTube: Prev Video` | Go back to the previous video in your playlist. | - |
 | `YouTube: Open in Panel`| Move sidebar player to an editor tab. | - |
 
 ## 🛠️ Configuration
