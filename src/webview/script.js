@@ -56,10 +56,12 @@ const header = document.querySelector('.header');
 let favorites = [];
 let currentListType = null;
 let currentPlaylistId = null;
-let pendingHistoryRequest = false;
-let pendingFavoritesRequest = false;
-let pendingPlaylistRequest = false;
-let pendingChannelRequest = false;
+let pendingRequests = {
+    history: false,
+    favorites: false,
+    playlist: false,
+    channel: false
+};
 let currentSearchQuery = '';
 let currentSearchContinuation = null;
 let currentFavoriteFilter = 'all';
@@ -252,46 +254,23 @@ openBtn.addEventListener('click', () => {
 	}
 });
 
-historyBtn.addEventListener('click', (e) => {
-	e.stopPropagation();
-    if (currentListType === 'history' && resultsContainer.style.display !== 'none') {
+function attachListListener(btn, type, messageType) {
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const wasAlreadyOpen = (currentListType === type && resultsContainer.style.display !== 'none');
         closeList();
-    } else {
-        pendingHistoryRequest = true;
-	    vscode.postMessage({ type: 'requestHistory' });
-    }
-});
+        if (!wasAlreadyOpen) {
+            pendingRequests[type] = true;
+            vscode.postMessage({ type: messageType });
+        }
+    });
+}
 
-favoritesBtn.addEventListener('click', (e) => {
-	e.stopPropagation();
-    if (currentListType === 'favorites' && resultsContainer.style.display !== 'none') {
-        closeList();
-    } else {
-        pendingFavoritesRequest = true;
-        log('Requesting favorites from extension');
-        vscode.postMessage({ type: 'requestFavorites' });
-    }
-});
-
-playlistListBtn.addEventListener('click', (e) => {
-	e.stopPropagation();
-    if (currentListType === 'playlist' && resultsContainer.style.display !== 'none') {
-        closeList();
-    } else {
-        pendingPlaylistRequest = true;
-        vscode.postMessage({ type: 'requestPlaylist' });
-    }
-});
-
-channelBtn.addEventListener('click', (e) => {
-	e.stopPropagation();
-    if (currentListType === 'channel' && resultsContainer.style.display !== 'none') {
-        closeList();
-    } else {
-        pendingChannelRequest = true;
-        vscode.postMessage({ type: 'requestChannelVideos' });
-    }
-});
+attachListListener(historyBtn, 'history', 'requestHistory');
+attachListListener(favoritesBtn, 'favorites', 'requestFavorites');
+attachListListener(playlistListBtn, 'playlist', 'requestPlaylist');
+attachListListener(channelBtn, 'channel', 'requestChannelVideos');
 
 favCurrentBtn.addEventListener('click', () => {
     if (!currentVideoId) return;
@@ -312,16 +291,21 @@ closeListBtn.addEventListener('click', (e) => {
     closeList();
 });
 
-function closeList() {
-    const isSearch = currentListType === 'search results';
+function restoreUrlToInput() {
+    if (lastLoadedOriginalUrl && input.value !== lastLoadedOriginalUrl) {
+        input.value = lastLoadedOriginalUrl;
+        clearBtn.style.display = 'block';
+    }
+}
+
+function closeList(restoreUrl = true) {
     resultsContainer.style.display = 'none';
     document.body.classList.remove('list-open');
     closeListBtn.style.display = 'none';
     
-    // Restore the current URL to the input ONLY when closing search results
-    if (isSearch && lastLoadedOriginalUrl) {
-        input.value = lastLoadedOriginalUrl;
-        clearBtn.style.display = 'block';
+    // Restore the current URL to the input when closing any list if it was changed (e.g. by search query)
+    if (restoreUrl) {
+        restoreUrlToInput();
     }
 
     currentListType = null;
@@ -373,7 +357,7 @@ function loadVideo(url) {
 
 	
 	setTimeout(() => {
-		closeList();
+		closeList(false);
 	}, 50);
 
 	
@@ -587,16 +571,16 @@ window.addEventListener('message', event => {
 			showMoreSearchResults(message.results, message.continuation);
 			break;
 		case 'history':
-			if (pendingHistoryRequest || (currentListType === 'history' && resultsContainer.style.display !== 'none')) {
+			if (pendingRequests.history || (currentListType === 'history' && resultsContainer.style.display !== 'none')) {
 			    showHistory(message.value);
-                pendingHistoryRequest = false;
+                pendingRequests.history = false;
             }
 			break;
 		case 'favorites':
 			favorites = message.value;
-            if (pendingFavoritesRequest || (currentListType === 'favorites' && resultsContainer.style.display !== 'none')) {
+            if (pendingRequests.favorites || (currentListType === 'favorites' && resultsContainer.style.display !== 'none')) {
 			    showFavorites(favorites);
-                pendingFavoritesRequest = false;
+                pendingRequests.favorites = false;
             }
 			updateFavoriteButton();
             if (currentListType === 'search results' || currentListType === 'channel') {
@@ -607,16 +591,16 @@ window.addEventListener('message', event => {
             }
 			break;
 		case 'playlist':
-			if (pendingPlaylistRequest || (currentListType === 'playlist' && resultsContainer.style.display !== 'none')) {
+			if (pendingRequests.playlist || (currentListType === 'playlist' && resultsContainer.style.display !== 'none')) {
 				showPlaylist(message.value);
-				pendingPlaylistRequest = false;
+				pendingRequests.playlist = false;
 			}
 			break;
 		case 'channelVideos':
-			if (pendingChannelRequest || (currentListType === 'channel' && resultsContainer.style.display !== 'none')) {
+			if (pendingRequests.channel || (currentListType === 'channel' && resultsContainer.style.display !== 'none')) {
                 if (message.channelThumbnail) currentChannelThumbnail = message.channelThumbnail;
 				showChannelVideos(message.channelName, message.results);
-				pendingChannelRequest = false;
+				pendingRequests.channel = false;
 			}
 			break;
 		case 'autoplayUpdated':
