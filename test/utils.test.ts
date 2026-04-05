@@ -117,6 +117,26 @@ describe('YouTube Extension Utils', () => {
             expect(parsed[0].url).to.equal('https://url1.com');
             expect(parsed[0].title).to.be.undefined;
         });
+
+        it('should handle type and thumbnail', () => {
+            const raw = [{ 
+                url: 'https://url1.com', 
+                title: 'Title 1',
+                type: 'channel',
+                thumbnail: 'https://thumb.com/img.jpg'
+            }];
+            const parsed = parseEntries(raw as any);
+            expect(parsed[0].url).to.equal('https://url1.com');
+            expect(parsed[0].type).to.equal('channel');
+            expect(parsed[0].thumbnail).to.equal('https://thumb.com/img.jpg');
+        });
+
+        it('should ignore invalid type values', () => {
+            const raw = [{ url: 'https://url1.com', type: 'invalid' }];
+            const parsed = parseEntries(raw as any);
+            expect(parsed[0].url).to.equal('https://url1.com');
+            expect(parsed[0].type).to.be.undefined;
+        });
     });
 
 });

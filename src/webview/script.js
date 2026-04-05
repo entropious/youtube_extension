@@ -62,9 +62,11 @@ let pendingPlaylistRequest = false;
 let pendingChannelRequest = false;
 let currentSearchQuery = '';
 let currentSearchContinuation = null;
+let currentFavoriteFilter = 'all';
 
 let currentChannelUrl = initialChannelUrl;
 let currentChannelName = initialChannelName;
+let currentChannelThumbnail = null;
 
 let currentVideoId = extractVideoId(initialUrl);
 let isPaused = false;
@@ -156,8 +158,6 @@ if (effectiveOriginalUrl) {
 }
 
 // Set initial playlist button states
-prevBtn.style.display = initialPlaylistId ? 'flex' : 'none';
-playlistListBtn.style.display = initialPlaylistId ? 'flex' : 'none';
 channelBtn.style.display = initialChannelUrl ? 'flex' : 'none';
 channelBtn.title = initialChannelName ? `Videos from ${initialChannelName}` : "Channel Videos";
 prevBtn.disabled = !initialCanPrev;
@@ -295,7 +295,6 @@ channelBtn.addEventListener('click', (e) => {
 
 favCurrentBtn.addEventListener('click', () => {
     if (!currentVideoId) return;
-    
     const currentlyFavorited = isFavorited(lastLoadedOriginalUrl);
     if (currentlyFavorited) {
         vscode.postMessage({ type: 'removeFavorite', url: lastLoadedOriginalUrl });
@@ -574,8 +573,10 @@ window.addEventListener('message', event => {
 		case 'channelUpdated':
 			currentChannelUrl = message.authorUrl;
 			currentChannelName = message.authorName;
+            if (message.authorThumbnail) currentChannelThumbnail = message.authorThumbnail;
 			channelBtn.style.display = currentChannelUrl ? 'flex' : 'none';
 			channelBtn.title = currentChannelName ? `Videos from ${currentChannelName}` : "Channel Videos";
+            updateFavoriteButton();
 			break;
 
 
@@ -598,6 +599,12 @@ window.addEventListener('message', event => {
                 pendingFavoritesRequest = false;
             }
 			updateFavoriteButton();
+            if (currentListType === 'search results' || currentListType === 'channel') {
+                updateAllListStars();
+            }
+            if (currentListType === 'channel') {
+                updateChannelHeaderStar();
+            }
 			break;
 		case 'playlist':
 			if (pendingPlaylistRequest || (currentListType === 'playlist' && resultsContainer.style.display !== 'none')) {
@@ -607,6 +614,7 @@ window.addEventListener('message', event => {
 			break;
 		case 'channelVideos':
 			if (pendingChannelRequest || (currentListType === 'channel' && resultsContainer.style.display !== 'none')) {
+                if (message.channelThumbnail) currentChannelThumbnail = message.channelThumbnail;
 				showChannelVideos(message.channelName, message.results);
 				pendingChannelRequest = false;
 			}
@@ -671,7 +679,7 @@ function requestPrev() {
 	}
 }
 
-function renderList(title, items, type, onClearAll, append = false) {
+function renderList(title, items, type, onClearAll, append = false, extraElements = []) {
 	if (!append) {
         resultsContainer.innerHTML = '';
         resultsContainer.scrollTop = 0;
@@ -681,7 +689,7 @@ function renderList(title, items, type, onClearAll, append = false) {
     // Show integrated close button ONLY for search results
     closeListBtn.style.display = (type === 'search results' ? 'flex' : 'none');
     document.body.classList.add('list-open');
-
+ 
 	// Header for history/favorites with Clear All
 	if (!append && (onClearAll || title)) {
 		const header = document.createElement('div');
@@ -691,6 +699,10 @@ function renderList(title, items, type, onClearAll, append = false) {
 		titleEl.className = 'list-title';
 		titleEl.textContent = title;
 		header.appendChild(titleEl);
+
+        if (extraElements && extraElements.length > 0) {
+            extraElements.forEach(el => header.appendChild(el));
+        }
 
 		if (onClearAll) {
 			const clearBtn = document.createElement('button');
@@ -724,17 +736,20 @@ function renderList(title, items, type, onClearAll, append = false) {
 				itemTitle = item.title;
 			} else {
 				videoId = extractVideoId(item.url);
-				thumbnailUrl = videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '';
+				thumbnailUrl = item.thumbnail || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '');
 				linkUrl = item.url;
 				itemTitle = item.title || item.url;
 			}
 
 			const div = document.createElement('div');
 			div.className = 'list-item';
+            div.dataset.url = linkUrl;
             if (item.type === 'channel') div.classList.add('channel-item');
             
 			const isCurrent = linkUrl === lastLoadedOriginalUrl;
 			if (isCurrent) div.classList.add('current');
+
+            const isFav = isFavorited(linkUrl);
 
 			div.innerHTML = `
 				<div class="item-thumb ${item.type === 'channel' ? 'channel' : ''}" style="background-image: url('${thumbnailUrl}')"></div>
@@ -743,14 +758,22 @@ function renderList(title, items, type, onClearAll, append = false) {
                     ${item.type === 'channel' ? `<div class="item-stats">${item.subscriberCount || ''} ${item.subscriberCount && item.videoCount ? '•' : ''} ${item.videoCount || ''}</div>` : ''}
                     ${item.type === 'video' && item.author ? `<div class="item-author">${item.author}</div>` : ''}
 				</div>
-				${(type !== 'search results' && type !== 'playlist' && type !== 'channel') ? `<button class="item-remove-btn" title="Remove">✕</button>` : ''}
+                <div class="item-actions">
+				    ${(type === 'search results' && item.type === 'channel') ? `
+                        <button class="item-fav-btn ${isFav ? 'active' : ''}" title="${isFav ? 'Remove from Favorites' : 'Add to Favorites'}">
+                            ${isFav ? '★' : '☆'}
+                        </button>
+                    ` : ''}
+				    ${(type !== 'search results' && type !== 'playlist' && type !== 'channel') ? `<button class="item-remove-btn" title="Remove">✕</button>` : ''}
+                </div>
 			`;
 			
 			div.addEventListener('click', (e) => {
-				if (e.target.classList.contains('item-remove-btn')) return;
+				if (e.target.closest('.item-remove-btn') || e.target.closest('.item-fav-btn')) return;
                 if (item.type === 'channel') {
                     pendingChannelRequest = true;
-                    vscode.postMessage({ type: 'requestChannelVideos', url: item.url, name: item.title });
+                    currentChannelThumbnail = item.thumbnail;
+                    vscode.postMessage({ type: 'requestChannelVideos', url: linkUrl, name: itemTitle, thumbnail: item.thumbnail });
                 } else {
 				    loadVideo(linkUrl);
                 }
@@ -766,7 +789,24 @@ function renderList(title, items, type, onClearAll, append = false) {
 						vscode.postMessage({ type: 'removeFavorite', url: item.url });
 					}
 				});
-			}
+			} else if (type === 'search results' && item.type === 'channel') {
+                const favBtn = div.querySelector('.item-fav-btn');
+                favBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const currentlyFav = isFavorited(linkUrl);
+                    if (currentlyFav) {
+                        vscode.postMessage({ type: 'removeFavorite', url: linkUrl });
+                    } else {
+                        vscode.postMessage({ 
+                            type: 'addFavorite', 
+                            url: linkUrl, 
+                            title: itemTitle,
+                            itemType: item.type,
+                            thumbnail: item.thumbnail
+                        });
+                    }
+                });
+            }
 
 			resultsContainer.appendChild(div);
 		});
@@ -831,7 +871,30 @@ function showHistory(urls) {
 }
 
 function showFavorites(urls) {
-	renderList('Favorites', urls, 'favorites');
+    const items = currentFavoriteFilter === 'all' 
+        ? urls 
+        : urls.filter(u => {
+            if (currentFavoriteFilter === 'video') return u.type !== 'channel';
+            if (currentFavoriteFilter === 'channel') return u.type === 'channel';
+            return true;
+        });
+
+    const filterEl = document.createElement('div');
+    filterEl.className = 'favorite-filters';
+    ['all', 'video', 'channel'].forEach(f => {
+        const btn = document.createElement('button');
+        btn.className = `filter-btn ${currentFavoriteFilter === f ? 'active' : ''}`;
+        btn.textContent = f.charAt(0).toUpperCase() + f.slice(1) + 's';
+        if (f === 'all') btn.textContent = 'All';
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            currentFavoriteFilter = f;
+            showFavorites(urls);
+        };
+        filterEl.appendChild(btn);
+    });
+
+	renderList('Favorites', items, 'favorites', null, false, [filterEl]);
 }
 
 function showPlaylist(urls) {
@@ -839,7 +902,27 @@ function showPlaylist(urls) {
 }
 
 function showChannelVideos(channelName, results) {
-	renderList(channelName ? `Videos from ${channelName}` : 'Channel Videos', results, 'channel');
+    const isFav = isFavorited(currentChannelUrl);
+    const favBtn = document.createElement('button');
+    favBtn.id = 'channel-header-fav-btn';
+    favBtn.className = `header-fav-btn ${isFav ? 'active' : ''}`;
+    favBtn.textContent = isFav ? '★' : '☆';
+    favBtn.title = isFav ? 'Remove Channel' : 'Add Channel to Favorites';
+    favBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (isFav) {
+            vscode.postMessage({ type: 'removeFavorite', url: currentChannelUrl });
+        } else {
+            vscode.postMessage({ 
+                type: 'addFavorite', 
+                url: currentChannelUrl, 
+                title: channelName,
+                itemType: 'channel',
+                thumbnail: currentChannelThumbnail
+            });
+        }
+    };
+	renderList(channelName ? `Videos from ${channelName}` : 'Channel Videos', results, 'channel', null, false, [favBtn]);
 }
 
 function isFavorited(url) {
@@ -850,20 +933,60 @@ function isFavorited(url) {
 
 
 function updateFavoriteButton() {
+    // Current Video Button
     if (!currentVideoId) {
         favCurrentBtn.style.display = 'none';
-        return;
-    }
-    favCurrentBtn.style.display = 'flex';
-    const isFav = isFavorited(lastLoadedOriginalUrl);
-
-    if (isFav) {
-        favCurrentBtn.classList.add('active');
-        favCurrentBtn.title = 'Remove from Favorites';
     } else {
-        favCurrentBtn.classList.remove('active');
-        favCurrentBtn.title = 'Add to Favorites';
+        favCurrentBtn.style.display = 'flex';
+        const isFav = isFavorited(lastLoadedOriginalUrl);
+        favCurrentBtn.classList.toggle('active', isFav);
     }
+}
+
+function updateAllListStars() {
+    const items = resultsContainer.querySelectorAll('.list-item');
+    items.forEach(div => {
+        const url = div.dataset.url;
+        if (url) {
+            const isFav = isFavorited(url);
+            const favBtn = div.querySelector('.item-fav-btn');
+            if (favBtn) {
+                favBtn.classList.toggle('active', isFav);
+                favBtn.textContent = isFav ? '★' : '☆';
+            }
+        }
+    });
+}
+
+function updateChannelHeaderStar() {
+    const btn = document.getElementById('channel-header-fav-btn');
+    if (!btn || !currentChannelUrl) return;
+    
+    const isFav = isFavorited(currentChannelUrl);
+    btn.classList.toggle('active', isFav);
+    btn.textContent = isFav ? '★' : '☆';
+    btn.title = isFav ? 'Remove Channel' : 'Add Channel to Favorites';
+    
+    // Also update current favorited state if we just re-rendered this without rebinding the click
+    // But since the onclick uses isFav which is closure-captured from the original function call,
+    // it's better to just re-trigger the view or define onclick in a way that doesn't capture the old isFav.
+    
+    // Better: update the onclick to re-calculate isFav internally
+    btn.onclick = (e) => {
+        e.stopPropagation();
+        const freshFav = isFavorited(currentChannelUrl);
+        if (freshFav) {
+            vscode.postMessage({ type: 'removeFavorite', url: currentChannelUrl });
+        } else {
+            vscode.postMessage({ 
+                type: 'addFavorite', 
+                url: currentChannelUrl, 
+                title: currentChannelName,
+                itemType: 'channel',
+                thumbnail: currentChannelThumbnail
+            });
+        }
+    };
 }
 
 
