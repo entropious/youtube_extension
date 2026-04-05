@@ -259,8 +259,13 @@ function attachListListener(btn, type, messageType) {
     btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const wasAlreadyOpen = (currentListType === type && resultsContainer.style.display !== 'none');
-        closeList();
-        if (!wasAlreadyOpen) {
+        if (wasAlreadyOpen) {
+            closeList();
+        } else {
+            // Restore URL immediately when switching/opening, but don't hide the container to avoid flicker
+            restoreUrlToInput();
+            closeListBtn.style.display = 'none'; // Hide search close button if it was there
+            
             pendingRequests[type] = true;
             vscode.postMessage({ type: messageType });
         }
