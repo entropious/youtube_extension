@@ -398,8 +398,13 @@ function extractVideoId(url) {
 	} catch(e) {}
 	
 	// Try to match a raw 11-char ID
-	const match = url.match(/[a-zA-Z0-9_-]{11}/);
-	return match ? match[0] : '';
+	const matches = url.match(/[a-zA-Z0-9_-]{11,}/g);
+	if (matches) {
+		for (const m of matches) {
+			if (m.length === 11) return m;
+		}
+	}
+	return '';
 }
 
 

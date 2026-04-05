@@ -103,7 +103,7 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "mocha -r ts-node/register -r ./test/bootstrap.ts test/**/*.test.ts"
+    "test": "TS_NODE_TRANSPILE_ONLY=true mocha -r ts-node/register -r ./test/bootstrap.ts test/**/*.test.ts"
   },
   "devDependencies": {
     "@types/chai": "^4.3.4",

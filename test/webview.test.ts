@@ -12,8 +12,8 @@ describe('Webview Script', () => {
     let vscodeSetStateStub: sinon.SinonStub;
 
     beforeEach(() => {
-        const htmlPath = path.join(__dirname, '../src/webview/index.html');
-        const scriptPath = path.join(__dirname, '../src/webview/script.js');
+        const htmlPath = path.join(process.cwd(), 'src/webview/index.html');
+        const scriptPath = path.join(process.cwd(), 'src/webview/script.js');
         
         let html = fs.readFileSync(htmlPath, 'utf8');
         let script = fs.readFileSync(scriptPath, 'utf8');
