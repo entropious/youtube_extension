@@ -184,17 +184,7 @@ input.addEventListener('keydown', (e) => {
 		const url = input.value;
 		if (url) { loadVideo(url); }
 	} else if (e.key === 'Escape') {
-		if (resultsContainer.style.display === 'flex') {
-			resultsContainer.style.display = 'none';
-			if (currentVideoId || (iframe.src && iframe.src !== 'about:blank')) {
-				iframe.style.display = 'block';
-				emptyState.style.display = 'none';
-			} else {
-				iframe.style.display = 'none';
-				emptyState.style.display = 'flex';
-			}
-			statusText.textContent = (currentVideoId && !isPaused) ? 'Playing' : 'Ready';
-		}
+		closeList();
 	}
 });
 
@@ -221,17 +211,7 @@ emptyUrlInput.addEventListener('keydown', (e) => {
 		const url = emptyUrlInput.value;
 		if (url) { loadVideo(url); }
 	} else if (e.key === 'Escape') {
-		if (resultsContainer.style.display === 'flex') {
-			resultsContainer.style.display = 'none';
-			if (currentVideoId || (iframe.src && iframe.src !== 'about:blank')) {
-				iframe.style.display = 'block';
-				emptyState.style.display = 'none';
-			} else {
-				iframe.style.display = 'none';
-				emptyState.style.display = 'flex';
-			}
-			statusText.textContent = (currentVideoId && !isPaused) ? 'Playing' : 'Ready';
-		}
+		closeList();
 	}
 });
 
@@ -312,11 +292,19 @@ closeListBtn.addEventListener('click', (e) => {
 });
 
 function closeList() {
+    const isSearch = currentListType === 'search results';
     resultsContainer.style.display = 'none';
     document.body.classList.remove('list-open');
     closeListBtn.style.display = 'none';
-    currentListType = null;
     
+    // Restore the current URL to the input ONLY when closing search results
+    if (isSearch && lastLoadedOriginalUrl) {
+        input.value = lastLoadedOriginalUrl;
+        clearBtn.style.display = 'block';
+    }
+
+    currentListType = null;
+
     if (!currentVideoId && (!iframe.src || iframe.src === 'about:blank')) {
         emptyState.style.display = 'flex';
         iframe.style.display = 'none';
