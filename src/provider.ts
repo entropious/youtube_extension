@@ -476,7 +476,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						if (!videosTab) videosTab = tabs[1]; // Fallback to second tab
 						
 						const contents = videosTab?.tabRenderer?.content?.richGridRenderer?.contents || 
-						                 videosTab?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents?.[0]?.gridRenderer?.items;
+							videosTab?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents?.[0]?.gridRenderer?.items;
 						
 						if (contents) {
 							for (const item of contents) {

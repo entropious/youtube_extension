@@ -4,3 +4,5 @@ out/
 *.vsix
 .DS_Store
 .env
+test/*.js
+test/*.js.map

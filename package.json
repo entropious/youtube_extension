@@ -1,8 +1,8 @@
 {
   "name": "youtube-panel",
   "displayName": "YouTube Panel",
-  "description": "The ultimate YouTube companion for VS Code with sidebar & tab views, built-in search, history, favorites, smart resume, playlists, and global media controls.",
-  "version": "0.2.4",
+  "description": "The ultimate YouTube companion for VS Code with sidebar & tab views, built-in search, channel navigation, history, favorites, smart resume, playlists, and global media controls.",
+  "version": "0.2.5",
   "publisher": "entro",
   "license": "MIT",
   "engines": {
@@ -111,10 +111,12 @@
     "@types/node": "^20.11.19",
     "@types/sinon": "^21.0.0",
     "@types/vscode": "^1.85.0",
+    "@types/jsdom": "^21.1.7",
     "@typescript-eslint/eslint-plugin": "^5.52.0",
     "@typescript-eslint/parser": "^5.52.0",
     "chai": "^4.3.7",
     "eslint": "^8.34.0",
+    "jsdom": "^22.1.0",
     "mocha": "^11.7.5",
     "sinon": "^21.0.3",
     "ts-node": "^10.9.2",
