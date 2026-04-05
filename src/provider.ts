@@ -509,38 +509,140 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private async _searchVideos(query: string): Promise<{id: string, title: string, thumbnail: string}[]> {
+	private _apiConfig?: { key: string, version: string };
+
+	private async _searchVideos(query: string, continuation?: string): Promise<{results: any[], continuation?: string}> {
 		try {
-			const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`);
-			const text = await res.text();
-			const results: {id: string, title: string, thumbnail: string}[] = [];
-			const match = text.match(/var ytInitialData = (.*?);<\/script>/);
-			if (match) {
-				try {
-					const data = JSON.parse(match[1]);
-					const contents = data.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents;
-					for (const content of contents) {
-						if (content.itemSectionRenderer) {
-							for (const item of content.itemSectionRenderer.contents) {
-								if (item.videoRenderer) {
-									const v = item.videoRenderer;
-									results.push({ id: v.videoId, title: v.title.runs[0].text, thumbnail: v.thumbnail.thumbnails[0].url });
-								}
-							}
+			let data: any;
+			if (continuation && this._apiConfig) {
+				const response = await fetch(`https://www.youtube.com/youtubei/v1/search?key=${this._apiConfig.key}`, {
+					method: 'POST',
+					body: JSON.stringify({
+						context: { client: { clientName: 'WEB', clientVersion: this._apiConfig.version } },
+						continuation: continuation
+					}),
+					headers: { 'Content-Type': 'application/json' }
+				});
+				if (!response.ok) return { results: [] };
+				data = await response.json();
+			} else {
+				const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`, {
+					headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
+				});
+				const text = await res.text();
+				const match = text.match(/var ytInitialData = (.*?);<\/script>/);
+				if (match) {
+					try {
+						data = JSON.parse(match[1]);
+
+						// Extract API config for future continuations
+						const apiKeyMatch = text.match(/"INNERTUBE_API_KEY":"(.*?)"/);
+						const clientVersionMatch = text.match(/"clientVersion":"(.*?)"/);
+						if (apiKeyMatch && clientVersionMatch) {
+							this._apiConfig = { key: apiKeyMatch[1], version: clientVersionMatch[1] };
 						}
+					} catch { /* ignore */ }
+				}
+
+				if (!data) {
+					// Fallback to regex parsing if ytInitialData is missing or malformed
+					const results: any[] = [];
+					const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"\}\]/g);
+					for (const m of matches) {
+						results.push({ 
+							type: 'video',
+							id: m[1], 
+							title: m[2].replace(/\\u0026/g, '&'), 
+							thumbnail: `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg` 
+						});
+						if (results.length >= 20) break;
 					}
-				} catch { /* ignore */ }
-			}
-			if (results.length === 0) {
-				const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"\}\]/g);
-				for (const m of matches) {
-					results.push({ id: m[1], title: m[2].replace(/\\u0026/g, '&'), thumbnail: `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg` });
-					if (results.length >= 20) break;
+					return { results };
 				}
 			}
-			return results;
-		} catch { return []; }
+
+			const allChannels: any[] = [];
+			const allVideos: any[] = [];
+			let nextContinuation: string | undefined;
+
+			const processItems = (items: any[]) => {
+				for (const content of items) {
+					if (content.itemSectionRenderer) {
+						processItems(content.itemSectionRenderer.contents);
+					} else if (content.videoRenderer) {
+						const v = content.videoRenderer;
+						let thumb = v.thumbnail.thumbnails[0].url;
+						if (thumb.startsWith('//')) thumb = 'https:' + thumb;
+						allVideos.push({
+							type: 'video',
+							id: v.videoId,
+							title: v.title.runs?.[0]?.text || v.title.simpleText,
+							thumbnail: thumb,
+							author: v.ownerText?.runs?.[0]?.text,
+							views: v.shortViewCountText?.simpleText || v.viewCountText?.simpleText,
+							published: v.publishedTimeText?.simpleText
+						});
+					} else if (content.channelRenderer) {
+						const c = content.channelRenderer;
+						let thumb = c.thumbnail.thumbnails[0].url;
+						if (thumb.startsWith('//')) thumb = 'https:' + thumb;
+						allChannels.push({
+							type: 'channel',
+							id: c.channelId,
+							title: c.title.simpleText || c.title.runs?.[0]?.text,
+							thumbnail: thumb,
+							subscriberCount: c.subscriberCountText?.simpleText,
+							videoCount: c.videoCountText?.simpleText,
+							url: `https://www.youtube.com/channel/${c.channelId}`
+						});
+					} else if (content.continuationItemRenderer) {
+						nextContinuation = content.continuationItemRenderer.continuationEndpoint?.continuationCommand?.token;
+					} else if (content.shelfRenderer) {
+						const shelfContents = content.shelfRenderer.content?.verticalListRenderer?.items || content.shelfRenderer.content?.expandedShelfContentsRenderer?.items;
+						if (shelfContents) processItems(shelfContents);
+					} else if (content.richItemRenderer) {
+						const richContent = content.richItemRenderer.content;
+						if (richContent) processItems([richContent]);
+					} else if (content.sectionListRenderer) {
+						processItems(content.sectionListRenderer.contents);
+					}
+				}
+			};
+
+			const primaryContents = data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || 
+				data.onResponseReceivedCommands?.[0]?.appendContinuationItemsAction?.continuationItems;
+
+			if (primaryContents) {
+				processItems(primaryContents);
+			}
+
+			const results: any[] = [];
+			if (!continuation && allChannels.length > 0) {
+				results.push(...allChannels.slice(0, 5));
+				results.push(...allVideos);
+			} else {
+				results.push(...allChannels);
+				results.push(...allVideos);
+			}
+
+			// Fallback helper for continuation token in different JSON structures
+			if (!nextContinuation) {
+				const sectionListArr = data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
+				if (sectionListArr.length > 0) {
+					const lastItem = sectionListArr[sectionListArr.length - 1];
+					if (lastItem?.continuationItemRenderer) {
+						nextContinuation = lastItem.continuationItemRenderer.continuationEndpoint?.continuationCommand?.token;
+					}
+				}
+			}
+
+			return { results, continuation: nextContinuation };
+		} catch (e) {
+			console.error('Search failed:', e);
+			return { results: [] };
+		}
 	}
+
 
 	public async resolveUrl(input: string): Promise<string> {
 		const trimmed = input.trim();
@@ -548,10 +650,15 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		if (/^https?:\/\//i.test(trimmed)) return trimmed;
 		if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return `https://www.youtube.com/watch?v=${trimmed}`;
 		if (trimmed.includes('.') && !trimmed.includes(' ') && trimmed.length > 3) return 'https://' + trimmed;
-		const results = await this._searchVideos(trimmed);
-		if (results.length > 0) return `https://www.youtube.com/watch?v=${results[0].id}`;
+		const { results } = await this._searchVideos(trimmed);
+		if (results.length > 0) {
+			const firstVideo = results.find(r => r.type === 'video');
+			if (firstVideo) return `https://www.youtube.com/watch?v=${firstVideo.id}`;
+			return results[0].url || trimmed;
+		}
 		return trimmed;
 	}
+
 
 	public async _findNextVideo(currentId: string): Promise<string | undefined> {
 		if (this._currentPlaylist.length > 0) {
@@ -771,12 +878,17 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					const trimmedInput = data.value.trim();
 					const isSearch = trimmedInput.includes(' ') || (!trimmedInput.includes('.') && !trimmedInput.startsWith('http') && !/^[a-zA-Z0-9_-]{11}$/.test(trimmedInput));
 					if (isSearch) {
-						const results = await this._searchVideos(trimmedInput);
-						webview.postMessage({ type: 'searchResults', results });
+						const { results, continuation } = await this._searchVideos(trimmedInput);
+						webview.postMessage({ type: 'searchResults', results, continuation, query: trimmedInput });
 					} else {
 						const resolvedUrl = await this.resolveUrl(data.value);
 						await this._loadUrlTargeted(webview, isTab, resolvedUrl);
 					}
+					break;
+				}
+				case 'requestMoreSearchResults': {
+					const { results, continuation } = await this._searchVideos(data.query, data.continuation);
+					webview.postMessage({ type: 'moreSearchResults', results, continuation, query: data.query });
 					break;
 				}
 				case 'requestHistory': 
@@ -843,12 +955,15 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						webview.postMessage({ type: 'playlist', value: playlistEntries });
 					}
 					break;
-				case 'requestChannelVideos':
-					if (this._currentChannelUrl) {
-						const results = await this._fetchChannelVideos(this._currentChannelUrl);
-						webview.postMessage({ type: 'channelVideos', results, channelName: this._currentChannelName });
+				case 'requestChannelVideos': {
+					const targetUrl = data.url || this._currentChannelUrl;
+					const targetName = data.name || this._currentChannelName;
+					if (targetUrl) {
+						const results = await this._fetchChannelVideos(targetUrl);
+						webview.postMessage({ type: 'channelVideos', results, channelName: targetName });
 					}
 					break;
+				}
 			}
 		});
 	}

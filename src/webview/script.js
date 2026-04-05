@@ -60,6 +60,8 @@ let pendingHistoryRequest = false;
 let pendingFavoritesRequest = false;
 let pendingPlaylistRequest = false;
 let pendingChannelRequest = false;
+let currentSearchQuery = '';
+let currentSearchContinuation = null;
 
 let currentChannelUrl = initialChannelUrl;
 let currentChannelName = initialChannelName;
@@ -578,7 +580,10 @@ window.addEventListener('message', event => {
 
 
 		case 'searchResults':
-			showSearchResults(message.results);
+			showSearchResults(message.results, message.continuation, message.query);
+			break;
+		case 'moreSearchResults':
+			showMoreSearchResults(message.results, message.continuation);
 			break;
 		case 'history':
 			if (pendingHistoryRequest || (currentListType === 'history' && resultsContainer.style.display !== 'none')) {
@@ -666,8 +671,11 @@ function requestPrev() {
 	}
 }
 
-function renderList(title, items, type, onClearAll) {
-	resultsContainer.innerHTML = '';
+function renderList(title, items, type, onClearAll, append = false) {
+	if (!append) {
+        resultsContainer.innerHTML = '';
+        resultsContainer.scrollTop = 0;
+    }
 	currentListType = type;
 	
     // Show integrated close button ONLY for search results
@@ -708,8 +716,11 @@ function renderList(title, items, type, onClearAll) {
 			
 			if (type === 'search results' || type === 'channel') {
 				videoId = item.id;
-				thumbnailUrl = item.thumbnail || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '');
-				linkUrl = `https://www.youtube.com/watch?v=${item.id}`;
+				thumbnailUrl = item.thumbnail;
+                if (!thumbnailUrl && item.type === 'video' && videoId) {
+                    thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+                }
+				linkUrl = item.type === 'channel' ? (item.url || videoId) : `https://www.youtube.com/watch?v=${item.id}`;
 				itemTitle = item.title;
 			} else {
 				videoId = extractVideoId(item.url);
@@ -720,20 +731,29 @@ function renderList(title, items, type, onClearAll) {
 
 			const div = document.createElement('div');
 			div.className = 'list-item';
+            if (item.type === 'channel') div.classList.add('channel-item');
+            
 			const isCurrent = linkUrl === lastLoadedOriginalUrl;
 			if (isCurrent) div.classList.add('current');
 
 			div.innerHTML = `
-				<div class="item-thumb" style="background-image: url('${thumbnailUrl}')"></div>
+				<div class="item-thumb ${item.type === 'channel' ? 'channel' : ''}" style="background-image: url('${thumbnailUrl}')"></div>
 				<div class="item-info">
 					<div class="item-title ${isCurrent ? 'current' : ''}">${itemTitle}</div>
+                    ${item.type === 'channel' ? `<div class="item-stats">${item.subscriberCount || ''} ${item.subscriberCount && item.videoCount ? '•' : ''} ${item.videoCount || ''}</div>` : ''}
+                    ${item.type === 'video' && item.author ? `<div class="item-author">${item.author}</div>` : ''}
 				</div>
 				${(type !== 'search results' && type !== 'playlist' && type !== 'channel') ? `<button class="item-remove-btn" title="Remove">✕</button>` : ''}
 			`;
 			
 			div.addEventListener('click', (e) => {
 				if (e.target.classList.contains('item-remove-btn')) return;
-				loadVideo(linkUrl);
+                if (item.type === 'channel') {
+                    pendingChannelRequest = true;
+                    vscode.postMessage({ type: 'requestChannelVideos', url: item.url, name: item.title });
+                } else {
+				    loadVideo(linkUrl);
+                }
 			});
 
 			if (type !== 'search results' && type !== 'playlist' && type !== 'channel') {
@@ -756,8 +776,39 @@ function renderList(title, items, type, onClearAll) {
 	statusText.textContent = title;
 }
 
-function showSearchResults(results) {
+function showSearchResults(results, continuation, query) {
+    currentSearchQuery = query;
+    currentSearchContinuation = continuation;
 	renderList('Search results', results, 'search results');
+    updateLoadMoreButton();
+}
+
+function showMoreSearchResults(results, continuation) {
+    currentSearchContinuation = continuation;
+    renderList('Search results', results, 'search results', null, true);
+    updateLoadMoreButton();
+}
+
+function updateLoadMoreButton() {
+    const existingBtn = document.getElementById('load-more-btn');
+    if (existingBtn) existingBtn.remove();
+
+    if (currentSearchContinuation && currentListType === 'search results') {
+        const btn = document.createElement('button');
+        btn.id = 'load-more-btn';
+        btn.className = 'load-more-btn';
+        btn.textContent = 'Load More Results';
+        btn.onclick = () => {
+            btn.textContent = 'Loading...';
+            btn.disabled = true;
+            vscode.postMessage({ 
+                type: 'requestMoreSearchResults', 
+                query: currentSearchQuery, 
+                continuation: currentSearchContinuation 
+            });
+        };
+        resultsContainer.appendChild(btn);
+    }
 }
 
 function normalizeInput(url) {

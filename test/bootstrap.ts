@@ -36,8 +36,9 @@ const vscodeMock: any = {
 };
 
 // Handle node modules mock
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+// In CJS require is available globally. For ESM compatibility we could keep createRequire 
+// but it is failing in the current environment's ES module detection.
+// const require = createRequire(import.meta.url);
 const Module = require('module');
 const originalLoad = Module._load;
 
