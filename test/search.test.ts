@@ -112,6 +112,51 @@ describe('YouTubeViewProvider Search and URL Resolution', () => {
             const { results } = await (provider as any)._searchVideos('test');
             expect(results).to.be.empty;
         });
+
+        it('should omit channels when continuation is provided', async () => {
+            const mockData = {
+                "onResponseReceivedCommands": [
+                    {
+                        "appendContinuationItemsAction": {
+                            "continuationItems": [
+                                {
+                                    "itemSectionRenderer": {
+                                        "contents": [
+                                            {
+                                                "channelRenderer": {
+                                                    "channelId": "UC123",
+                                                    "title": { "simpleText": "Test Channel" },
+                                                    "thumbnail": { "thumbnails": [{ "url": "thumb_chan" }] }
+                                                }
+                                            },
+                                            {
+                                                "videoRenderer": {
+                                                    "videoId": "dQw4w9WgXcQ",
+                                                    "title": { "simpleText": "Title 1" },
+                                                    "thumbnail": { "thumbnails": [{ "url": "thumb1" }] }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            };
+
+            (global.fetch as sinon.SinonStub).resolves({
+                ok: true,
+                json: async () => mockData
+            });
+
+            (provider as any)._apiConfig = { key: 'test', version: '1.0' };
+
+            const { results } = await (provider as any)._searchVideos('test', 'continuation_token');
+            expect(results).to.have.lengthOf(1); // Only the video should be returned
+            expect(results[0].id).to.equal('dQw4w9WgXcQ');
+            expect(results[0].type).to.equal('video');
+        });
     });
 
     describe('_fetchRelated', () => {

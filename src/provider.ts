@@ -617,11 +617,13 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			}
 
 			const results: any[] = [];
-			if (!continuation && allChannels.length > 0) {
-				results.push(...allChannels.slice(0, 5));
+			if (!continuation) {
+				if (allChannels.length > 0) {
+					results.push(...allChannels.slice(0, 5));
+				}
 				results.push(...allVideos);
 			} else {
-				results.push(...allChannels);
+				// On pagination, only show videos
 				results.push(...allVideos);
 			}
 
