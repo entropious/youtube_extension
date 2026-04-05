@@ -200,7 +200,6 @@ class YouTubeUriHandler implements vscode.UriHandler {
 				}
 
 				const startTime = parseInt(query.get('startTime') || query.get('t') || '0', 10);
-				const autoplay = query.get('autoplay') !== '0';
 				
 				// Reveal the sidebar view
 				await vscode.commands.executeCommand('youtube-panel.view.focus');
@@ -215,8 +214,9 @@ class YouTubeUriHandler implements vscode.UriHandler {
 			} else {
 				vscode.window.showErrorMessage(`YouTube Panel: Unknown URI path "${uri.path}"`);
 			}
-		} catch (err: any) {
-			vscode.window.showErrorMessage(`YouTube Panel URI Error: ${err.message || err}`);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			vscode.window.showErrorMessage(`YouTube Panel URI Error: ${message}`);
 		}
 	}
 }
@@ -234,7 +234,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.registerWebviewPanelSerializer('youtube-player', {
 			async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, state: unknown) {
 				if (provider) {
-					const s = state as any;
+					const s = state as Record<string, any>;
 					const url = s?.currentOriginalUrl || '';
 					const time = s?.currentTime || 0;
 					provider._setupTabPanel(webviewPanel, url, webviewPanel.title, time);
