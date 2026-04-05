@@ -36,6 +36,8 @@ const vscodeMock: any = {
 };
 
 // Handle node modules mock
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 const Module = require('module');
 const originalLoad = Module._load;
 

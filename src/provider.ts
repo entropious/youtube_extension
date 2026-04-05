@@ -610,6 +610,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	public _setupTabPanel(panel: vscode.WebviewPanel, url: string, title?: string, startTime?: number) {
 		this._tabPanel = panel;
+		this._lastUrl = url;
+		this._lastTime = startTime ?? this._getTimestamp(url);
+		
 		// Keep interaction state if it was already set (e.g. when moving from sidebar)
 		this._tabHasInteracted = this._tabHasInteracted || false;
 		if (url && url !== 'about:blank') {
