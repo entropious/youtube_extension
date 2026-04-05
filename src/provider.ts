@@ -237,7 +237,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				this.postToAll({
 					type: 'channelUpdated',
 					authorUrl: this._currentChannelUrl,
-					authorName: this._currentChannelName
+					authorName: this._currentChannelName,
+                    authorThumbnail: info.authorThumbnail
 				});
 			}
 		}
@@ -248,14 +249,14 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		return parseEntries(raw);
 	}
 
-	private async _saveFavorite(url: string, title?: string): Promise<void> {
+	private async _saveFavorite(url: string, title?: string, type?: 'video' | 'channel' | 'playlist', thumbnail?: string): Promise<void> {
 		const normalized = url.trim();
 		if (!normalized) return;
 		const favorites = this._getFavorites();
 		if (favorites.some(f => f.url === normalized)) return;
-		const info = !title ? await this._resolveVideoInfo(normalized) : null;
+		const info = (!title && !type) ? await this._resolveVideoInfo(normalized) : null;
 		const finalTitle = title || info?.title || normalized;
-		favorites.unshift({ url: normalized, title: finalTitle });
+		favorites.unshift({ url: normalized, title: finalTitle, type, thumbnail });
 		await this._state.update(YouTubeViewProvider.favoritesKey, favorites);
 	}
 
@@ -354,11 +355,11 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		return extractVideoId(urlStr);
 	}
 
-	private async _resolveVideoInfo(url: string): Promise<{title?: string, authorUrl?: string, authorName?: string} | undefined> {
+	private async _resolveVideoInfo(url: string): Promise<{title?: string, authorUrl?: string, authorName?: string, authorThumbnail?: string} | undefined> {
 		try {
 			const response = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(url)}`);
 			if (!response.ok) return undefined;
-			const data = (await response.json()) as { title?: unknown, author_url?: unknown, author_name?: unknown };
+			const data = (await response.json()) as { title?: unknown, author_url?: unknown, author_name?: unknown, thumbnail_url?: unknown };
 			return {
 				title: typeof data.title === 'string' ? data.title : undefined,
 				authorUrl: typeof data.author_url === 'string' ? data.author_url : undefined,
@@ -456,7 +457,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private async _fetchChannelVideos(channelUrl: string): Promise<{id: string, title: string, thumbnail: string}[]> {
+	private async _fetchChannelVideos(channelUrl: string): Promise<{results: {id: string, title: string, thumbnail: string}[], thumbnail?: string}> {
 		try {
 			const videosUrl = channelUrl.endsWith('/videos') ? channelUrl : `${channelUrl}/videos`;
 			const res = await fetch(videosUrl, {
@@ -464,11 +465,20 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			});
 			const text = await res.text();
 			const results: {id: string, title: string, thumbnail: string}[] = [];
+            let channelThumbnail: string | undefined;
 			
 			const match = text.match(/var ytInitialData = (.*?);<\/script>/);
 			if (match) {
 				try {
 					const data = JSON.parse(match[1]);
+
+                    // Try to get channel thumbnail from Various potential locations
+                    channelThumbnail = 
+                        data.header?.c4TabbedHeaderRenderer?.avatar?.thumbnails?.[0]?.url ||
+                        data.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.metadataViewModel?.title?.avatarViewModel?.content?.image?.renderInfo?.layoutOptimizedImage?.source?.url ||
+                        data.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.metadataViewModel?.title?.avatarViewModel?.content?.image?.sources?.[0]?.url ||
+                        data.metadata?.channelMetadataRenderer?.avatar?.thumbnails?.[0]?.url;
+
 					// YouTube channel videos are usually in tabs[1] (Videos)
 					const tabs = data.contents?.twoColumnBrowseResultsRenderer?.tabs;
 					if (tabs) {
@@ -502,10 +512,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					if (results.length >= 30) break;
 				}
 			}
-			return results;
+			return { results, thumbnail: channelThumbnail };
 		} catch (e) {
 			console.error('Channel fetch failed:', e);
-			return [];
+			return { results: [] };
 		}
 	}
 
@@ -900,7 +910,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					webview.postMessage({ type: 'favorites', value: this._getFavorites() }); 
 					break;
 				case 'addFavorite': 
-					await this._saveFavorite(data.url, data.title); 
+					await this._saveFavorite(data.url, data.title, data.itemType, data.thumbnail); 
 					this.postToAll({ type: 'favorites', value: this._getFavorites() }); 
 					break;
 				case 'removeFavorite': 
@@ -960,9 +970,19 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'requestChannelVideos': {
 					const targetUrl = data.url || this._currentChannelUrl;
 					const targetName = data.name || this._currentChannelName;
+                    const providedThumb = data.thumbnail;
 					if (targetUrl) {
-						const results = await this._fetchChannelVideos(targetUrl);
-						webview.postMessage({ type: 'channelVideos', results, channelName: targetName });
+						this._currentChannelUrl = targetUrl;
+						this._currentChannelName = targetName;
+						const { results, thumbnail } = await this._fetchChannelVideos(targetUrl);
+                        const finalThumb = providedThumb || thumbnail;
+						webview.postMessage({ type: 'channelVideos', results, channelName: targetName, channelThumbnail: finalThumb });
+						this.postToAll({
+							type: 'channelUpdated',
+							authorUrl: this._currentChannelUrl,
+							authorName: this._currentChannelName,
+                            authorThumbnail: finalThumb
+						});
 					}
 					break;
 				}

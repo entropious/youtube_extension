@@ -5,6 +5,8 @@
 export type HistoryEntry = {
 	url: string;
 	title?: string;
+	type?: 'video' | 'channel' | 'playlist';
+	thumbnail?: string;
 };
 
 /**
@@ -103,10 +105,12 @@ export function parseEntries(raw: unknown[]): HistoryEntry[] {
 			}
 
 			if (item && typeof item === 'object' && 'url' in item && typeof (item as { url: unknown }).url === 'string') {
-				const maybeTitle = (item as { title?: unknown }).title;
+				const i = item as Record<string, unknown>;
 				return {
-					url: (item as { url: string }).url,
-					title: typeof maybeTitle === 'string' ? maybeTitle : undefined
+					url: i.url as string,
+					title: typeof i.title === 'string' ? i.title : undefined,
+					type: (i.type === 'video' || i.type === 'channel' || i.type === 'playlist') ? i.type : undefined,
+					thumbnail: typeof i.thumbnail === 'string' ? i.thumbnail : undefined
 				};
 			}
 
