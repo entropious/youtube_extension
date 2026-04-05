@@ -134,7 +134,7 @@ button:hover {
 	background: var(--vscode-button-hoverBackground);
 }
 
-#history-btn, #favorites-btn, #playlist-list-btn {
+#history-btn, #favorites-btn, #playlist-list-btn, #channel-btn {
 	background: transparent;
 	padding: 0 6px;
 	color: #aaa;
@@ -144,7 +144,7 @@ button:hover {
     justify-content: center;
 }
 
-#history-btn:hover, #favorites-btn:hover, #playlist-list-btn:hover {
+#history-btn:hover, #favorites-btn:hover, #playlist-list-btn:hover, #channel-btn:hover {
 	color: #fff;
     background: transparent;
 }
