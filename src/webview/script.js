@@ -683,7 +683,7 @@ function renderList(title, items, type, onClearAll, append = false) {
     document.body.classList.add('list-open');
 
 	// Header for history/favorites with Clear All
-	if (onClearAll || title) {
+	if (!append && (onClearAll || title)) {
 		const header = document.createElement('div');
 		header.className = 'list-header';
 		
@@ -705,7 +705,7 @@ function renderList(title, items, type, onClearAll, append = false) {
 		resultsContainer.appendChild(header);
 	}
 
-	if (items.length === 0) {
+	if (!append && items.length === 0) {
 		const noResults = document.createElement('div');
 		noResults.className = 'no-results-msg';
 		noResults.textContent = `No ${type} found`;

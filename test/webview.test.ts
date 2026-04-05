@@ -135,5 +135,41 @@ describe('Webview Script', () => {
             expect(channelBtn.style.display).to.equal('flex');
             expect(channelBtn.title).to.equal('Videos from Test Channel');
         });
+
+        it('should handle moreSearchResults message without duplicating headers', () => {
+            // First load some results (including a channel)
+            const results1 = [
+                { type: 'channel', id: 'UC123', title: 'First Channel', url: 'https://youtube.com/channel/UC123' },
+                { type: 'video', id: '123', title: 'First Video', thumbnail: 'thumb1.jpg' }
+            ];
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: { type: 'searchResults', results: results1 }
+            }));
+            
+            const resultsContainer = document.getElementById('results-container')!;
+            
+            // Should contain channel and video
+            expect(resultsContainer.innerHTML).to.contain('First Channel');
+            expect(resultsContainer.innerHTML).to.contain('First Video');
+            
+            // Should contain ONE header
+            let headers = resultsContainer.querySelectorAll('.list-header');
+            expect(headers.length).to.equal(1);
+            
+            // Then append more results (should only be videos realistically, but we test the frontend behavior)
+            const results2 = [{ type: 'video', id: '456', title: 'Second Video', thumbnail: 'thumb2.jpg' }];
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: { type: 'moreSearchResults', results: results2 }
+            }));
+            
+            // Should contain all items
+            expect(resultsContainer.innerHTML).to.contain('First Channel');
+            expect(resultsContainer.innerHTML).to.contain('First Video');
+            expect(resultsContainer.innerHTML).to.contain('Second Video');
+            
+            // Should STILL only contain ONE header
+            headers = resultsContainer.querySelectorAll('.list-header');
+            expect(headers.length).to.equal(1);
+        });
     });
 });
