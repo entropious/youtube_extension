@@ -25,6 +25,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	private _currentPlaylist: string[] = [];
 	private _playlistTitles: Record<string, string> = {};
 	private _playlistId?: string;
+	private _currentChannelUrl?: string;
+	private _currentChannelName?: string;
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
@@ -118,7 +120,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			autoplay: hasInteracted,
 			targetView: targetView,
 			playlistId: playlistId,
-			canPrev: canPrev
+			canPrev: canPrev,
+			authorUrl: this._currentChannelUrl,
+			authorName: this._currentChannelName
 		};
 		if (targetView === 'tab' && this._tabPanel) {
 			this._tabPanel.webview.postMessage(message);
@@ -160,7 +164,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			startTime: finalStartTime,
 			autoplay: hasInteracted,
 			playlistId: playlistId,
-			canPrev: canPrev
+			canPrev: canPrev,
+			authorUrl: this._currentChannelUrl,
+			authorName: this._currentChannelName
 		});
 	}
 
@@ -204,9 +210,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		// Immediately save/bubble up the URL in history (preserving any existing title)
 		await this._saveUrl(url);
 
-		// Resolve the title asynchronously
-		const title = await this._resolveTitle(url);
-		if (title) {
+		// Resolve the info asynchronously
+		const info = await this._resolveVideoInfo(url);
+		if (info?.title) {
+			const title = info.title;
 			// Update history with the resolved title
 			await this._saveUrl(url, title);
 			
@@ -221,7 +228,17 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			// Update the webview title if it's the current video
 			if (this._lastUrl === url) {
 				if (this._tabPanel) this._tabPanel.title = title;
-				this.postToAll({ type: 'history', value: this._getHistory() });
+				this._currentChannelUrl = info.authorUrl;
+				this._currentChannelName = info.authorName;
+				this.postToAll({ 
+					type: 'history', 
+					value: this._getHistory() 
+				});
+				this.postToAll({
+					type: 'channelUpdated',
+					authorUrl: this._currentChannelUrl,
+					authorName: this._currentChannelName
+				});
 			}
 		}
 	}
@@ -236,7 +253,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		if (!normalized) return;
 		const favorites = this._getFavorites();
 		if (favorites.some(f => f.url === normalized)) return;
-		const finalTitle = title || await this._resolveTitle(normalized);
+		const info = !title ? await this._resolveVideoInfo(normalized) : null;
+		const finalTitle = title || info?.title || normalized;
 		favorites.unshift({ url: normalized, title: finalTitle });
 		await this._state.update(YouTubeViewProvider.favoritesKey, favorites);
 	}
@@ -336,12 +354,16 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		return extractVideoId(urlStr);
 	}
 
-	private async _resolveTitle(url: string): Promise<string | undefined> {
+	private async _resolveVideoInfo(url: string): Promise<{title?: string, authorUrl?: string, authorName?: string} | undefined> {
 		try {
 			const response = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(url)}`);
 			if (!response.ok) return undefined;
-			const data = (await response.json()) as { title?: unknown };
-			return typeof data.title === 'string' ? data.title : undefined;
+			const data = (await response.json()) as { title?: unknown, author_url?: unknown, author_name?: unknown };
+			return {
+				title: typeof data.title === 'string' ? data.title : undefined,
+				authorUrl: typeof data.author_url === 'string' ? data.author_url : undefined,
+				authorName: typeof data.author_name === 'string' ? data.author_name : undefined
+			};
 		} catch { return undefined; }
 	}
 
@@ -431,6 +453,59 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		} catch (e) { 
 			console.error('Playlist fetch failed:', e);
 			return []; 
+		}
+	}
+
+	private async _fetchChannelVideos(channelUrl: string): Promise<{id: string, title: string, thumbnail: string}[]> {
+		try {
+			const videosUrl = channelUrl.endsWith('/videos') ? channelUrl : `${channelUrl}/videos`;
+			const res = await fetch(videosUrl, {
+				headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
+			});
+			const text = await res.text();
+			const results: {id: string, title: string, thumbnail: string}[] = [];
+			
+			const match = text.match(/var ytInitialData = (.*?);<\/script>/);
+			if (match) {
+				try {
+					const data = JSON.parse(match[1]);
+					// YouTube channel videos are usually in tabs[1] (Videos)
+					const tabs = data.contents?.twoColumnBrowseResultsRenderer?.tabs;
+					if (tabs) {
+						let videosTab = tabs.find((t: any) => t.tabRenderer?.title === 'Videos' || t.tabRenderer?.endpoint?.browseEndpoint?.params?.includes('videos'));
+						if (!videosTab) videosTab = tabs[1]; // Fallback to second tab
+						
+						const contents = videosTab?.tabRenderer?.content?.richGridRenderer?.contents || 
+						                 videosTab?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents?.[0]?.gridRenderer?.items;
+						
+						if (contents) {
+							for (const item of contents) {
+								const video = item.richItemRenderer?.content?.videoRenderer || item.gridVideoRenderer || item.videoRenderer;
+								if (video) {
+									results.push({
+										id: video.videoId,
+										title: video.title?.runs?.[0]?.text || video.title?.simpleText || '',
+										thumbnail: video.thumbnail?.thumbnails?.[0]?.url || `https://i.ytimg.com/vi/${video.videoId}/hqdefault.jpg`
+									});
+								}
+							}
+						}
+					}
+				} catch (e) { console.error('Error parsing channel ytInitialData:', e); }
+			}
+			
+			if (results.length === 0) {
+				// Fallback regex
+				const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"\}\]/g);
+				for (const m of matches) {
+					results.push({ id: m[1], title: m[2].replace(/\\u0026/g, '&'), thumbnail: `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg` });
+					if (results.length >= 30) break;
+				}
+			}
+			return results;
+		} catch (e) {
+			console.error('Channel fetch failed:', e);
+			return [];
 		}
 	}
 
@@ -640,7 +715,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				.replace('%%PROXY_PORT_JSON%%', JSON.stringify(this._getProxyPort()))
 				.replace('%%AUTOPLAY_JSON%%', JSON.stringify(this._getAutoplay()))
 				.replace('%%INITIAL_PLAYLIST_ID_JSON%%', JSON.stringify(options.playlistId || null))
-				.replace('%%INITIAL_CAN_PREV_JSON%%', JSON.stringify(!!options.canPrev));
+				.replace('%%INITIAL_CAN_PREV_JSON%%', JSON.stringify(!!options.canPrev))
+				.replace('%%INITIAL_CHANNEL_URL_JSON%%', JSON.stringify(this._currentChannelUrl || null))
+				.replace('%%INITIAL_CHANNEL_NAME_JSON%%', JSON.stringify(this._currentChannelName || null));
 
 			return html
 				.replace('%%CSP%%', "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-src http://127.0.0.1:* https://www.youtube.com https://youtube.com;")
@@ -753,6 +830,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'setAutoplay': await this._state.update(YouTubeViewProvider.autoplayKey, !!data.value); this.postToAll({ type: 'autoplayUpdated', value: !!data.value }); break;
 				case 'openExternal': if (isTab) this.loadUrl(data.url, data.time, 'tab'); else { this.pause(); this.openInPanel(data.url, data.title, data.time); } break;
 				case 'urlSelected': void this._saveUrl(data.value); break;
+					break;
 				case 'requestPlaylist':
 					if (this._playlistId) {
 						const playlistEntries = this._currentPlaylist.map(id => ({
@@ -760,6 +838,12 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 							title: this._playlistTitles[id]
 						}));
 						webview.postMessage({ type: 'playlist', value: playlistEntries });
+					}
+					break;
+				case 'requestChannelVideos':
+					if (this._currentChannelUrl) {
+						const results = await this._fetchChannelVideos(this._currentChannelUrl);
+						webview.postMessage({ type: 'channelVideos', results, channelName: this._currentChannelName });
 					}
 					break;
 			}

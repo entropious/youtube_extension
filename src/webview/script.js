@@ -32,6 +32,8 @@ const currentProxyPort = %%PROXY_PORT_JSON%%;
 const initialAutoplaySetting = %%AUTOPLAY_JSON%%;
 const initialPlaylistId = %%INITIAL_PLAYLIST_ID_JSON%%;
 const initialCanPrev = %%INITIAL_CAN_PREV_JSON%%;
+const initialChannelUrl = %%INITIAL_CHANNEL_URL_JSON%%;
+const initialChannelName = %%INITIAL_CHANNEL_NAME_JSON%%;
 
 const input = document.getElementById('url-input');
 const clearBtn = document.getElementById('clear-btn');
@@ -41,6 +43,7 @@ const openBtn = document.getElementById('open-btn');
 const historyBtn = document.getElementById('history-btn');
 const favoritesBtn = document.getElementById('favorites-btn');
 const playlistListBtn = document.getElementById('playlist-list-btn');
+const channelBtn = document.getElementById('channel-btn');
 const favCurrentBtn = document.getElementById('fav-current-btn');
 const iframe = document.getElementById('video-frame');
 const emptyState = document.getElementById('empty-state');
@@ -56,6 +59,10 @@ let currentPlaylistId = null;
 let pendingHistoryRequest = false;
 let pendingFavoritesRequest = false;
 let pendingPlaylistRequest = false;
+let pendingChannelRequest = false;
+
+let currentChannelUrl = initialChannelUrl;
+let currentChannelName = initialChannelName;
 
 let currentVideoId = extractVideoId(initialUrl);
 let isPaused = false;
@@ -149,6 +156,8 @@ if (effectiveOriginalUrl) {
 // Set initial playlist button states
 prevBtn.style.display = initialPlaylistId ? 'flex' : 'none';
 playlistListBtn.style.display = initialPlaylistId ? 'flex' : 'none';
+channelBtn.style.display = initialChannelUrl ? 'flex' : 'none';
+channelBtn.title = initialChannelName ? `Videos from ${initialChannelName}` : "Channel Videos";
 prevBtn.disabled = !initialCanPrev;
 prevBtn.title = initialCanPrev ? "Previous (Playlist)" : "First Video (Playlist)";
 nextBtn.style.display = 'flex';
@@ -169,6 +178,7 @@ if (effectiveUrl && effectiveUrl !== 'about:blank') {
 	prevBtn.style.display = 'none';
 	playlistListBtn.style.display = 'none';
     favCurrentBtn.style.display = 'none';
+    channelBtn.style.display = 'none';
     nextBtn.style.display = 'none';
     openBtn.style.display = 'none';
 	setTimeout(() => emptyUrlInput.focus(), 100);
@@ -268,6 +278,16 @@ playlistListBtn.addEventListener('click', (e) => {
     } else {
         pendingPlaylistRequest = true;
         vscode.postMessage({ type: 'requestPlaylist' });
+    }
+});
+
+channelBtn.addEventListener('click', (e) => {
+	e.stopPropagation();
+    if (currentListType === 'channel' && resultsContainer.style.display !== 'none') {
+        closeList();
+    } else {
+        pendingChannelRequest = true;
+        vscode.postMessage({ type: 'requestChannelVideos' });
     }
 });
 
@@ -536,7 +556,19 @@ window.addEventListener('message', event => {
 			nextBtn.style.display = 'flex';
 			openBtn.style.display = 'flex';
 
+			currentChannelUrl = message.authorUrl;
+			currentChannelName = message.authorName;
+			channelBtn.style.display = currentChannelUrl ? 'flex' : 'none';
+			channelBtn.title = currentChannelName ? `Videos from ${currentChannelName}` : "Channel Videos";
+
 			updateFavoriteButton();
+			break;
+
+		case 'channelUpdated':
+			currentChannelUrl = message.authorUrl;
+			currentChannelName = message.authorName;
+			channelBtn.style.display = currentChannelUrl ? 'flex' : 'none';
+			channelBtn.title = currentChannelName ? `Videos from ${currentChannelName}` : "Channel Videos";
 			break;
 
 
@@ -561,6 +593,12 @@ window.addEventListener('message', event => {
 			if (pendingPlaylistRequest || (currentListType === 'playlist' && resultsContainer.style.display !== 'none')) {
 				showPlaylist(message.value);
 				pendingPlaylistRequest = false;
+			}
+			break;
+		case 'channelVideos':
+			if (pendingChannelRequest || (currentListType === 'channel' && resultsContainer.style.display !== 'none')) {
+				showChannelVideos(message.channelName, message.results);
+				pendingChannelRequest = false;
 			}
 			break;
 		case 'autoplayUpdated':
@@ -594,6 +632,7 @@ window.addEventListener('message', event => {
 			statusText.textContent = 'Ready';
 			clearBtn.style.display = 'none';
 			prevBtn.style.display = 'none';
+			channelBtn.style.display = 'none';
 			saveState();
 			setTimeout(() => emptyUrlInput.focus(), 100);
 			break;
@@ -662,9 +701,9 @@ function renderList(title, items, type, onClearAll) {
 		items.forEach(item => {
 			let videoId, thumbnailUrl, linkUrl, itemTitle;
 			
-			if (type === 'search results') {
+			if (type === 'search results' || type === 'channel') {
 				videoId = item.id;
-				thumbnailUrl = item.thumbnail;
+				thumbnailUrl = item.thumbnail || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '');
 				linkUrl = `https://www.youtube.com/watch?v=${item.id}`;
 				itemTitle = item.title;
 			} else {
@@ -684,7 +723,7 @@ function renderList(title, items, type, onClearAll) {
 				<div class="item-info">
 					<div class="item-title ${isCurrent ? 'current' : ''}">${itemTitle}</div>
 				</div>
-				${(type !== 'search results' && type !== 'playlist') ? `<button class="item-remove-btn" title="Remove">✕</button>` : ''}
+				${(type !== 'search results' && type !== 'playlist' && type !== 'channel') ? `<button class="item-remove-btn" title="Remove">✕</button>` : ''}
 			`;
 			
 			div.addEventListener('click', (e) => {
@@ -692,7 +731,7 @@ function renderList(title, items, type, onClearAll) {
 				loadVideo(linkUrl);
 			});
 
-			if (type !== 'search results' && type !== 'playlist') {
+			if (type !== 'search results' && type !== 'playlist' && type !== 'channel') {
 				const removeBtn = div.querySelector('.item-remove-btn');
 				removeBtn.addEventListener('click', (e) => {
 					e.stopPropagation();
@@ -741,6 +780,10 @@ function showFavorites(urls) {
 
 function showPlaylist(urls) {
 	renderList('Playlist Videos', urls, 'playlist');
+}
+
+function showChannelVideos(channelName, results) {
+	renderList(channelName ? `Videos from ${channelName}` : 'Channel Videos', results, 'channel');
 }
 
 function isFavorited(url) {
