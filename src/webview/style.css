@@ -419,7 +419,7 @@ button:hover {
 }
 
 /* Helper for fav-current-btn interactivity */
-#fav-current-btn, #prev-btn, #next-btn, #open-btn, #close-list-btn {
+#fav-current-btn, #prev-btn, #next-btn, #open-btn {
 	color: #777;
 }
 
