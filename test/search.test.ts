@@ -44,7 +44,7 @@ describe('YouTubeViewProvider Search and URL Resolution', () => {
 
         it('should perform search if input has spaces', async () => {
             const query = 'rick roll';
-            const searchStub = sinon.stub(provider as any, '_searchVideos').resolves([{ id: 'dQw4w9WgXcQ' }]);
+            const searchStub = sinon.stub(provider as any, '_searchVideos').resolves({ results: [{ id: 'dQw4w9WgXcQ', type: 'video' }] });
             
             const resolved = await provider.resolveUrl(query);
             expect(resolved).to.contain('dQw4w9WgXcQ');
@@ -84,7 +84,7 @@ describe('YouTubeViewProvider Search and URL Resolution', () => {
                 text: async () => mockHtml
             });
 
-            const results = await (provider as any)._searchVideos('test');
+            const { results } = await (provider as any)._searchVideos('test');
             expect(results).to.have.lengthOf(1);
             expect(results[0].id).to.equal('dQw4w9WgXcQ');
         });
@@ -100,16 +100,16 @@ describe('YouTubeViewProvider Search and URL Resolution', () => {
                 text: async () => mockHtml
             });
 
-            const results = await (provider as any)._searchVideos('test');
+            const { results } = await (provider as any)._searchVideos('test');
             expect(results).to.have.lengthOf(1);
             expect(results[0].id).to.equal('dQw4w9WgXcQ');
             expect(results[0].title).to.equal('Title 2');
         });
 
 
-        it('should return empty array on failure', async () => {
+        it('should return empty result on failure', async () => {
             (global.fetch as sinon.SinonStub).rejects(new Error('Network error'));
-            const results = await (provider as any)._searchVideos('test');
+            const { results } = await (provider as any)._searchVideos('test');
             expect(results).to.be.empty;
         });
     });

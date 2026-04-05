@@ -444,3 +444,49 @@ iframe {
 	cursor: pointer;
 	accent-color: var(--accent-color);
 }
+.item-thumb.channel {
+    border-radius: 50% !important;
+    width: 64px !important;
+    height: 64px !important;
+    margin: 0 18px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: #222; /* Fallback color */
+    flex-shrink: 0;
+}
+
+.item-stats, .item-author {
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+}
+
+.load-more-btn {
+    width:calc(100% - 16px);
+    margin: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #aaa;
+    padding: 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.load-more-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.load-more-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
