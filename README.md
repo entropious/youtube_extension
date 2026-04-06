@@ -33,6 +33,10 @@ Experience YouTube like never before, right from your editor! Watch tutorials, l
 4.  **Save for Later**: Click the **Star** icon to add a video to your **Favorites**.
 5.  **Control with Keys**: Use the shortcuts `cmd+alt+p` (Play/Pause) and `cmd+alt+o` (Next) while coding.
 
+> [!IMPORTANT]
+> **Where are the controls?**
+> To stay out of your way while coding, everything (search bar, buttons) is hidden by default. **Simply hover your mouse over the top-left corner** of the player at any time to instantly reveal the controls.
+
 ## ⌨️ Commands
 
 | Command | Description | Shortcut |
