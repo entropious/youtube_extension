@@ -28,6 +28,7 @@ describe('Webview Script', () => {
             .replace('%%PROXY_PORT_JSON%%', '0')
             .replace('%%AUTOPLAY_JSON%%', 'true')
             .replace('%%INITIAL_PLAYLIST_ID_JSON%%', 'null')
+            .replace('%%INITIAL_PLAYLIST_TITLE_JSON%%', 'null')
             .replace('%%INITIAL_CAN_PREV_JSON%%', 'false')
             .replace('%%INITIAL_CHANNEL_URL_JSON%%', 'null')
             .replace('%%INITIAL_CHANNEL_NAME_JSON%%', 'null');

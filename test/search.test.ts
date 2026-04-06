@@ -49,6 +49,21 @@ describe('YouTubeViewProvider Search and URL Resolution', () => {
             const resolved = await provider.resolveUrl(query);
             expect(resolved).to.contain('dQw4w9WgXcQ');
         });
+
+        it('should resolve playlist-only URL to its first video', async () => {
+            const playlistUrl = 'https://www.youtube.com/playlist?list=PL123';
+            const playlistId = 'PL123';
+            const firstVideoId = 'vid123';
+            
+            const fetchPlaylistStub = sinon.stub(provider as any, '_fetchPlaylist').resolves({ 
+                ids: [firstVideoId, 'vid456'],
+                title: 'Test Playlist'
+            });
+
+            const resolved = await provider.resolveUrl(playlistUrl);
+            expect(resolved).to.equal(`https://www.youtube.com/watch?v=${firstVideoId}&list=${playlistId}`);
+            expect(fetchPlaylistStub.calledWith(playlistId)).to.be.true;
+        });
     });
 
     describe('_searchVideos', () => {

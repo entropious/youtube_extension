@@ -441,7 +441,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				} else {
 					// Fallback to other locations
 					this._currentPlaylistTitle = data.header?.playlistHeaderRenderer?.title?.simpleText || 
-											   data.header?.playlistHeaderRenderer?.title?.runs?.[0]?.text;
+						data.header?.playlistHeaderRenderer?.title?.runs?.[0]?.text;
 				}
 			} catch (e) {
 				console.error('Error parsing ytInitialData:', e);
@@ -680,7 +680,21 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public async resolveUrl(input: string): Promise<string> {
 		const trimmed = input.trim();
 		if (!trimmed) return '';
-		if (/^https?:\/\//i.test(trimmed)) return trimmed;
+
+		if (/^https?:\/\//i.test(trimmed)) {
+			const playlistId = extractPlaylistId(trimmed);
+			const videoId = extractVideoId(trimmed);
+			
+			// If it's a playlist URL but NOT a specific video, resolve to the first video
+			if (playlistId && !videoId) {
+				const playlistData = await this._fetchPlaylist(playlistId);
+				if (playlistData.ids.length > 0) {
+					return `https://www.youtube.com/watch?v=${playlistData.ids[0]}&list=${playlistId}`;
+				}
+			}
+			return trimmed;
+		}
+
 		if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return `https://www.youtube.com/watch?v=${trimmed}`;
 		if (trimmed.includes('.') && !trimmed.includes(' ') && trimmed.length > 3) return 'https://' + trimmed;
 		const { results } = await this._searchVideos(trimmed);
@@ -981,7 +995,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'urlSelected': void this._saveUrl(data.value); break;
 					break;
 				case 'requestPlaylist': {
-					let pId = data.url ? extractPlaylistId(data.url) : this._playlistId;
+					const pId = data.url ? extractPlaylistId(data.url) : this._playlistId;
 					if (pId) {
 						if (pId !== this._playlistId) {
 							// If different playlist, need to fetch it first
