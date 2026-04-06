@@ -31,6 +31,7 @@ const initialOriginalUrl = %%INITIAL_ORIGINAL_URL_JSON%%;
 const currentProxyPort = %%PROXY_PORT_JSON%%;
 const initialAutoplaySetting = %%AUTOPLAY_JSON%%;
 const initialPlaylistId = %%INITIAL_PLAYLIST_ID_JSON%%;
+const initialPlaylistTitle = %%INITIAL_PLAYLIST_TITLE_JSON%%;
 const initialCanPrev = %%INITIAL_CAN_PREV_JSON%%;
 const initialChannelUrl = %%INITIAL_CHANNEL_URL_JSON%%;
 const initialChannelName = %%INITIAL_CHANNEL_NAME_JSON%%;
@@ -62,6 +63,7 @@ let pendingRequests = {
     playlist: false,
     channel: false
 };
+let currentPlaylistName = initialPlaylistTitle;
 let currentSearchQuery = '';
 let currentSearchContinuation = null;
 let currentFavoriteFilter = 'all';
@@ -546,6 +548,7 @@ window.addEventListener('message', event => {
 			prevBtn.style.display = message.playlistId ? 'flex' : 'none';
 			playlistListBtn.style.display = message.playlistId ? 'flex' : 'none';
 			currentPlaylistId = message.playlistId;
+			currentPlaylistName = message.playlistTitle;
 			prevBtn.disabled = !message.canPrev;
 			prevBtn.title = message.canPrev ? "Previous (Playlist)" : "First Video (Playlist)";
 			nextBtn.style.display = 'flex';
@@ -594,9 +597,14 @@ window.addEventListener('message', event => {
             if (currentListType === 'channel') {
                 updateChannelHeaderStar();
             }
+            if (currentListType === 'playlist') {
+                updatePlaylistHeaderStar();
+            }
 			break;
 		case 'playlist':
 			if (pendingRequests.playlist || (currentListType === 'playlist' && resultsContainer.style.display !== 'none')) {
+                if (message.playlistId) currentPlaylistId = message.playlistId;
+                if (message.playlistTitle) currentPlaylistName = message.playlistTitle;
 				showPlaylist(message.value);
 				pendingRequests.playlist = false;
 			}
@@ -640,6 +648,9 @@ window.addEventListener('message', event => {
 			clearBtn.style.display = 'none';
 			prevBtn.style.display = 'none';
 			channelBtn.style.display = 'none';
+			playlistListBtn.style.display = 'none';
+			currentPlaylistId = null;
+			currentPlaylistName = null;
 			saveState();
 			setTimeout(() => emptyUrlInput.focus(), 100);
 			break;
@@ -734,6 +745,7 @@ function renderList(title, items, type, onClearAll, append = false, extraElement
 			div.className = 'list-item';
             div.dataset.url = linkUrl;
             if (item.type === 'channel') div.classList.add('channel-item');
+            if (item.type === 'playlist') div.classList.add('playlist-item');
             
 			const isCurrent = linkUrl === lastLoadedOriginalUrl;
 			if (isCurrent) div.classList.add('current');
@@ -741,14 +753,16 @@ function renderList(title, items, type, onClearAll, append = false, extraElement
             const isFav = isFavorited(linkUrl);
 
 			div.innerHTML = `
-				<div class="item-thumb ${item.type === 'channel' ? 'channel' : ''}" style="background-image: url('${thumbnailUrl}')"></div>
+				<div class="item-thumb ${item.type === 'channel' ? 'channel' : ''} ${item.type === 'playlist' ? 'playlist' : ''}" style="background-image: url('${thumbnailUrl}')">
+                    ${item.type === 'playlist' ? '<div class="playlist-overlay"><span class="playlist-icon">≡</span></div>' : ''}
+                </div>
 				<div class="item-info">
 					<div class="item-title ${isCurrent ? 'current' : ''}">${itemTitle}</div>
                     ${item.type === 'channel' ? `<div class="item-stats">${item.subscriberCount || ''} ${item.subscriberCount && item.videoCount ? '•' : ''} ${item.videoCount || ''}</div>` : ''}
                     ${item.type === 'video' && item.author ? `<div class="item-author">${item.author}</div>` : ''}
 				</div>
                 <div class="item-actions">
-				    ${(type === 'search results' && item.type === 'channel') ? `
+				    ${(type === 'search results' && (item.type === 'channel' || item.type === 'playlist')) ? `
                         <button class="item-fav-btn ${isFav ? 'active' : ''}" title="${isFav ? 'Remove from Favorites' : 'Add to Favorites'}">
                             ${isFav ? '★' : '☆'}
                         </button>
@@ -763,6 +777,10 @@ function renderList(title, items, type, onClearAll, append = false, extraElement
                     pendingChannelRequest = true;
                     currentChannelThumbnail = item.thumbnail;
                     vscode.postMessage({ type: 'requestChannelVideos', url: linkUrl, name: itemTitle, thumbnail: item.thumbnail });
+                } else if (item.type === 'playlist') {
+                    // Click on playlist in search or favorites: show its videos
+                    pendingRequests.playlist = true;
+                    vscode.postMessage({ type: 'requestPlaylist', url: linkUrl });
                 } else {
 				    loadVideo(linkUrl);
                 }
@@ -778,23 +796,25 @@ function renderList(title, items, type, onClearAll, append = false, extraElement
 						vscode.postMessage({ type: 'removeFavorite', url: item.url });
 					}
 				});
-			} else if (type === 'search results' && item.type === 'channel') {
+			} else if ((type === 'search results' || type === 'favorites') && (item.type === 'channel' || item.type === 'playlist')) {
                 const favBtn = div.querySelector('.item-fav-btn');
-                favBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const currentlyFav = isFavorited(linkUrl);
-                    if (currentlyFav) {
-                        vscode.postMessage({ type: 'removeFavorite', url: linkUrl });
-                    } else {
-                        vscode.postMessage({ 
-                            type: 'addFavorite', 
-                            url: linkUrl, 
-                            title: itemTitle,
-                            itemType: item.type,
-                            thumbnail: item.thumbnail
-                        });
-                    }
-                });
+                if (favBtn) {
+                    favBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const currentlyFav = isFavorited(linkUrl);
+                        if (currentlyFav) {
+                            vscode.postMessage({ type: 'removeFavorite', url: linkUrl });
+                        } else {
+                            vscode.postMessage({ 
+                                type: 'addFavorite', 
+                                url: linkUrl, 
+                                title: itemTitle,
+                                itemType: item.type,
+                                thumbnail: item.thumbnail
+                            });
+                        }
+                    });
+                }
             }
 
 			resultsContainer.appendChild(div);
@@ -863,14 +883,15 @@ function showFavorites(urls) {
     const items = currentFavoriteFilter === 'all' 
         ? urls 
         : urls.filter(u => {
-            if (currentFavoriteFilter === 'video') return u.type !== 'channel';
+            if (currentFavoriteFilter === 'video') return u.type !== 'channel' && u.type !== 'playlist';
             if (currentFavoriteFilter === 'channel') return u.type === 'channel';
+            if (currentFavoriteFilter === 'playlist') return u.type === 'playlist';
             return true;
         });
 
     const filterEl = document.createElement('div');
     filterEl.className = 'favorite-filters';
-    ['all', 'video', 'channel'].forEach(f => {
+    ['all', 'video', 'channel', 'playlist'].forEach(f => {
         const btn = document.createElement('button');
         btn.className = `filter-btn ${currentFavoriteFilter === f ? 'active' : ''}`;
         btn.textContent = f.charAt(0).toUpperCase() + f.slice(1) + 's';
@@ -887,7 +908,27 @@ function showFavorites(urls) {
 }
 
 function showPlaylist(urls) {
-	renderList('Playlist Videos', urls, 'playlist');
+    const playlistUrl = `https://www.youtube.com/playlist?list=${currentPlaylistId}`;
+    const isFav = isFavorited(playlistUrl);
+    const favBtn = document.createElement('button');
+    favBtn.id = 'playlist-header-fav-btn';
+    favBtn.className = `header-fav-btn ${isFav ? 'active' : ''}`;
+    favBtn.textContent = isFav ? '★' : '☆';
+    favBtn.title = isFav ? 'Remove Playlist' : 'Add Playlist to Favorites';
+    favBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (isFav) {
+            vscode.postMessage({ type: 'removeFavorite', url: playlistUrl });
+        } else {
+            vscode.postMessage({ 
+                type: 'addFavorite', 
+                url: playlistUrl, 
+                title: currentPlaylistName || 'Playlist',
+                itemType: 'playlist'
+            });
+        }
+    };
+	renderList(currentPlaylistName ? `Playlist: ${currentPlaylistName}` : 'Playlist Videos', urls, 'playlist', null, false, [favBtn]);
 }
 
 function showChannelVideos(channelName, results) {
@@ -973,6 +1014,33 @@ function updateChannelHeaderStar() {
                 title: currentChannelName,
                 itemType: 'channel',
                 thumbnail: currentChannelThumbnail
+            });
+        }
+    };
+}
+
+
+function updatePlaylistHeaderStar() {
+    const btn = document.getElementById('playlist-header-fav-btn');
+    const playlistUrl = `https://www.youtube.com/playlist?list=${currentPlaylistId}`;
+    if (!btn || !currentPlaylistId) return;
+    
+    const isFav = isFavorited(playlistUrl);
+    btn.classList.toggle('active', isFav);
+    btn.textContent = isFav ? '★' : '☆';
+    btn.title = isFav ? 'Remove Playlist' : 'Add Playlist to Favorites';
+    
+    btn.onclick = (e) => {
+        e.stopPropagation();
+        const freshFav = isFavorited(playlistUrl);
+        if (freshFav) {
+            vscode.postMessage({ type: 'removeFavorite', url: playlistUrl });
+        } else {
+            vscode.postMessage({ 
+                type: 'addFavorite', 
+                url: playlistUrl, 
+                title: currentPlaylistName || 'Playlist',
+                itemType: 'playlist'
             });
         }
     };
