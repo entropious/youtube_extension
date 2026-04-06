@@ -119,4 +119,28 @@ describe('YouTubeViewProvider Favorites', () => {
             value: [] 
         }))).to.be.true;
     });
+
+    it('should save a channel favorite with correct type and thumbnail', async () => {
+        const url = 'https://www.youtube.com/channel/UC123';
+        const title = 'Test Channel';
+        const thumbnail = 'https://thumb.com/photo.jpg';
+
+        await (provider as any)._saveFavorite(url, title, 'channel', thumbnail);
+        
+        const favorites = provider._getFavorites();
+        expect(favorites).to.have.lengthOf(1);
+        expect(favorites[0].type).to.equal('channel');
+        expect(favorites[0].thumbnail).to.equal(thumbnail);
+    });
+
+    it('should save a playlist favorite with correct type', async () => {
+        const url = 'https://www.youtube.com/playlist?list=PL123';
+        const title = 'Test Playlist';
+
+        await (provider as any)._saveFavorite(url, title, 'playlist');
+        
+        const favorites = provider._getFavorites();
+        expect(favorites).to.have.lengthOf(1);
+        expect(favorites[0].type).to.equal('playlist');
+    });
 });

@@ -2,7 +2,7 @@
   "name": "youtube-panel",
   "displayName": "YouTube Panel",
   "description": "The ultimate YouTube companion for VS Code with sidebar & tab views, built-in search, channel navigation, history, favorites, smart resume, playlists, and global media controls.",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "publisher": "entro",
   "license": "MIT",
   "engines": {
