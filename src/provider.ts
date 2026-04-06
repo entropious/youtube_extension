@@ -13,6 +13,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public static readonly playlistIdKey = 'youtube-playlist-id';
 	public static readonly playlistVideosKey = 'youtube-playlist-videos';
 	public static readonly playlistTitlesKey = 'youtube-playlist-titles';
+	public static readonly playlistTitleKey = 'youtube-playlist-title';
 
 	private _sidebarView?: vscode.WebviewView;
 	public _tabPanel?: vscode.WebviewPanel;
@@ -27,6 +28,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	private _playlistId?: string;
 	private _currentChannelUrl?: string;
 	private _currentChannelName?: string;
+	private _currentPlaylistTitle?: string;
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
@@ -36,6 +38,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._playlistId = this._state.get<string>(YouTubeViewProvider.playlistIdKey);
 		this._currentPlaylist = this._state.get<string[]>(YouTubeViewProvider.playlistVideosKey, []);
 		this._playlistTitles = this._state.get<Record<string, string>>(YouTubeViewProvider.playlistTitlesKey, {});
+		this._currentPlaylistTitle = this._state.get<string>(YouTubeViewProvider.playlistTitleKey);
 	}
 
 	private postToAll(message: any) {
@@ -164,6 +167,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			startTime: finalStartTime,
 			autoplay: hasInteracted,
 			playlistId: playlistId,
+			playlistTitle: this._currentPlaylistTitle,
 			canPrev: canPrev,
 			authorUrl: this._currentChannelUrl,
 			authorName: this._currentChannelName
@@ -194,17 +198,22 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		const playlistId = extractPlaylistId(url);
 		if (playlistId && playlistId !== this._playlistId) {
 			this._playlistId = playlistId;
-			this._currentPlaylist = await this._fetchPlaylist(playlistId);
+			const playlistData = await this._fetchPlaylist(playlistId);
+			this._currentPlaylist = playlistData.ids;
+			this._currentPlaylistTitle = playlistData.title;
 			await this._state.update(YouTubeViewProvider.playlistIdKey, this._playlistId);
 			await this._state.update(YouTubeViewProvider.playlistVideosKey, this._currentPlaylist);
 			await this._state.update(YouTubeViewProvider.playlistTitlesKey, this._playlistTitles);
+			await this._state.update(YouTubeViewProvider.playlistTitleKey, this._currentPlaylistTitle);
 		} else if (!playlistId && this._playlistId) {
 			this._playlistId = undefined;
 			this._currentPlaylist = [];
 			this._playlistTitles = {};
+			this._currentPlaylistTitle = undefined;
 			await this._state.update(YouTubeViewProvider.playlistIdKey, undefined);
 			await this._state.update(YouTubeViewProvider.playlistVideosKey, undefined);
 			await this._state.update(YouTubeViewProvider.playlistTitlesKey, undefined);
+			await this._state.update(YouTubeViewProvider.playlistTitleKey, undefined);
 		}
 
 		// Immediately save/bubble up the URL in history (preserving any existing title)
@@ -290,8 +299,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._timestampCache = {};
 		this._playlistId = undefined;
 		this._currentPlaylist = [];
+		this._currentPlaylistTitle = undefined;
 		await this._state.update(YouTubeViewProvider.playlistIdKey, undefined);
 		await this._state.update(YouTubeViewProvider.playlistVideosKey, undefined);
+		await this._state.update(YouTubeViewProvider.playlistTitleKey, undefined);
 		
 		const message = { type: 'stateCleared' };
 		if (this._sidebarView) {
@@ -379,7 +390,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		} catch { return []; }
 	}
 
-	private async _fetchPlaylist(playlistId: string): Promise<string[]> {
+	private async _fetchPlaylist(playlistId: string): Promise<{ ids: string[], title?: string }> {
 		try {
 			const res = await fetch(`https://www.youtube.com/playlist?list=${playlistId}`, {
 				headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
@@ -394,7 +405,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			if (!initialDataMatch) {
 				// Fallback to simple regex if JSON not found
 				const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g);
-				return [...new Set(Array.from(matches).map(m => m[1]))];
+				return { ids: [...new Set(Array.from(matches).map(m => m[1]))] };
 			}
 
 			let allIds: string[] = [];
@@ -422,6 +433,16 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				const data = JSON.parse(initialDataMatch[1]);
 				continuationToken = processData(data);
 				allIds = [...new Set(allIds)]; // Initial dedup
+				
+				// Extract playlist title
+				const metadata = data.metadata?.playlistMetadataRenderer;
+				if (metadata && metadata.title) {
+					this._currentPlaylistTitle = metadata.title;
+				} else {
+					// Fallback to other locations
+					this._currentPlaylistTitle = data.header?.playlistHeaderRenderer?.title?.simpleText || 
+											   data.header?.playlistHeaderRenderer?.title?.runs?.[0]?.text;
+				}
 			} catch (e) {
 				console.error('Error parsing ytInitialData:', e);
 			}
@@ -450,10 +471,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				}
 			}
 
-			return allIds;
+			return { ids: allIds, title: this._currentPlaylistTitle };
 		} catch (e) { 
 			console.error('Playlist fetch failed:', e);
-			return []; 
+			return { ids: [] }; 
 		}
 	}
 
@@ -744,7 +765,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._syncPlaylistState(playlistId);
 		const canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
 
-		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, this._tabHasInteracted), url, { playlistId, canPrev });
+		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, this._tabHasInteracted), url, { playlistId, playlistTitle: this._currentPlaylistTitle, canPrev });
 		this._setupWebviewHandlers(panel.webview, true);
 
 		panel.onDidDispose(() => {
@@ -821,10 +842,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			// Trigger a background load request to ensure playlist and history/titles are restored/synced
 			void this._handleLoadRequest(lastUrl);
 		}
-		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl, { playlistId, canPrev });
+		webviewView.webview.html = this._getHtmlForWebview(initialUrl, initialOriginalUrl, { playlistId, playlistTitle: this._currentPlaylistTitle, canPrev });
 	}
 
-	private _getHtmlForWebview(initialUrl = 'about:blank', initialOriginalUrl = '', options: { playlistId?: string, canPrev?: boolean } = {}) {
+	private _getHtmlForWebview(initialUrl = 'about:blank', initialOriginalUrl = '', options: { playlistId?: string, playlistTitle?: string, canPrev?: boolean } = {}) {
 		try {
 			const webviewPath = path.join(this._extensionUri.fsPath, 'src', 'webview');
 			const html = fs.readFileSync(path.join(webviewPath, 'index.html'), 'utf8');
@@ -838,6 +859,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				.replace('%%AUTOPLAY_JSON%%', JSON.stringify(this._getAutoplay()))
 				.replace('%%INITIAL_PLAYLIST_ID_JSON%%', JSON.stringify(options.playlistId || null))
 				.replace('%%INITIAL_CAN_PREV_JSON%%', JSON.stringify(!!options.canPrev))
+				.replace('%%INITIAL_PLAYLIST_TITLE_JSON%%', JSON.stringify(options.playlistTitle || null))
 				.replace('%%INITIAL_CHANNEL_URL_JSON%%', JSON.stringify(this._currentChannelUrl || null))
 				.replace('%%INITIAL_CHANNEL_NAME_JSON%%', JSON.stringify(this._currentChannelName || null));
 
@@ -958,15 +980,28 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'openExternal': if (isTab) this.loadUrl(data.url, data.time, 'tab'); else { this.pause(); this.openInPanel(data.url, data.title, data.time); } break;
 				case 'urlSelected': void this._saveUrl(data.value); break;
 					break;
-				case 'requestPlaylist':
-					if (this._playlistId) {
-						const playlistEntries = this._currentPlaylist.map(id => ({
-							url: `https://www.youtube.com/watch?v=${id}&list=${this._playlistId}`,
-							title: this._playlistTitles[id]
-						}));
-						webview.postMessage({ type: 'playlist', value: playlistEntries });
+				case 'requestPlaylist': {
+					let pId = data.url ? extractPlaylistId(data.url) : this._playlistId;
+					if (pId) {
+						if (pId !== this._playlistId) {
+							// If different playlist, need to fetch it first
+							const playlistData = await this._fetchPlaylist(pId);
+							const playlistEntries = playlistData.ids.map(id => ({
+								url: `https://www.youtube.com/watch?v=${id}&list=${pId}`,
+								title: this._playlistTitles[id]
+							}));
+							webview.postMessage({ type: 'playlist', value: playlistEntries, playlistId: pId, playlistTitle: playlistData.title });
+						} else {
+							// Same playlist as current
+							const playlistEntries = this._currentPlaylist.map(id => ({
+								url: `https://www.youtube.com/watch?v=${id}&list=${this._playlistId}`,
+								title: this._playlistTitles[id]
+							}));
+							webview.postMessage({ type: 'playlist', value: playlistEntries, playlistId: this._playlistId, playlistTitle: this._currentPlaylistTitle });
+						}
 					}
 					break;
+				}
 				case 'requestChannelVideos': {
 					const targetUrl = data.url || this._currentChannelUrl;
 					const targetName = data.name || this._currentChannelName;
