@@ -172,5 +172,51 @@ describe('Webview Script', () => {
             headers = resultsContainer.querySelectorAll('.list-header');
             expect(headers.length).to.equal(1);
         });
+
+        it('should handle favorites message and dispatch correct messages on click', () => {
+            const favorites = [
+                { type: 'video', url: 'https://www.youtube.com/watch?v=123', title: 'Video Fav' },
+                { type: 'channel', url: 'https://www.youtube.com/channel/UC123', title: 'Channel Fav', thumbnail: 'channel.jpg' },
+                { type: 'playlist', url: 'https://www.youtube.com/playlist?list=PL123', title: 'Playlist Fav' }
+            ];
+            
+            // First, click favorites button to set the pending state and show container
+            document.getElementById('favorites-btn')?.click();
+            
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: { type: 'favorites', value: favorites }
+            }));
+            
+            const resultsContainer = document.getElementById('results-container')!;
+            expect(resultsContainer.innerHTML).to.contain('Video Fav');
+            expect(resultsContainer.innerHTML).to.contain('Channel Fav');
+            expect(resultsContainer.innerHTML).to.contain('Playlist Fav');
+            
+            const items = resultsContainer.querySelectorAll('.list-item');
+            expect(items.length).to.equal(3);
+            
+            // 1. Test clicking a Video Favorite
+            (items[0] as HTMLElement).click();
+            expect(vscodePostMessageStub.calledWith(sinon.match({
+                type: 'requestLoad',
+                value: 'https://www.youtube.com/watch?v=123'
+            }))).to.be.true;
+            
+            // 2. Test clicking a Channel Favorite (Verifies the fix for the typo)
+            (items[1] as HTMLElement).click();
+            expect(vscodePostMessageStub.calledWith(sinon.match({
+                type: 'requestChannelVideos',
+                url: 'https://www.youtube.com/channel/UC123',
+                name: 'Channel Fav',
+                thumbnail: 'channel.jpg'
+            }))).to.be.true;
+            
+            // 3. Test clicking a Playlist Favorite
+            (items[2] as HTMLElement).click();
+            expect(vscodePostMessageStub.calledWith(sinon.match({
+                type: 'requestPlaylist',
+                url: 'https://www.youtube.com/playlist?list=PL123'
+            }))).to.be.true;
+        });
     });
 });

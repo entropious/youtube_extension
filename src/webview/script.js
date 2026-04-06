@@ -774,7 +774,7 @@ function renderList(title, items, type, onClearAll, append = false, extraElement
 			div.addEventListener('click', (e) => {
 				if (e.target.closest('.item-remove-btn') || e.target.closest('.item-fav-btn')) return;
                 if (item.type === 'channel') {
-                    pendingChannelRequest = true;
+                    pendingRequests.channel = true;
                     currentChannelThumbnail = item.thumbnail;
                     vscode.postMessage({ type: 'requestChannelVideos', url: linkUrl, name: itemTitle, thumbnail: item.thumbnail });
                 } else if (item.type === 'playlist') {
