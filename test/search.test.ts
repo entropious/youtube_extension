@@ -123,9 +123,11 @@ describe('YouTubeViewProvider Search and URL Resolution', () => {
 
 
         it('should return empty result on failure', async () => {
+            const errorStub = sinon.stub(console, 'error');
             (global.fetch as sinon.SinonStub).rejects(new Error('Network error'));
             const { results } = await (provider as any)._searchVideos('test');
             expect(results).to.be.empty;
+            errorStub.restore();
         });
 
         it('should omit channels when continuation is provided', async () => {

@@ -331,18 +331,25 @@ function closeList(restoreUrl = true) {
 document.addEventListener('click', () => {
     // No dropdowns to hide anymore
 });
-
 resultsContainer.addEventListener('mouseleave', (e) => {
     if (currentListType && currentListType !== 'search results') {
-        // If moving to the header area (top: 0 to top: 72px), let's see if we should close
-        // But maybe it's simpler to just close it as requested
-        closeList();
+        // Don't close if moving to the header area (where the URL bar is)
+        const toHeader = e.relatedTarget && (e.relatedTarget === header || header.contains(e.relatedTarget));
+        if (!toHeader) {
+            closeList();
+        }
     }
 });
 
-
-
-
+header.addEventListener('mouseleave', (e) => {
+    if (currentListType && currentListType !== 'search results') {
+        // Only close if we are not moving back into the results container
+        const toResults = e.relatedTarget && (e.relatedTarget === resultsContainer || resultsContainer.contains(e.relatedTarget));
+        if (!toResults) {
+            closeList();
+        }
+    }
+});
 
 function loadVideo(url) {
 	const normalized = normalizeInput(url);

@@ -282,7 +282,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			}
 		}
 
-		const info = (!finalTitle && !finalType) ? await this._resolveVideoInfo(normalized) : null;
+		const info = !finalTitle ? await this._resolveVideoInfo(normalized) : null;
 		finalTitle = finalTitle || info?.title || normalized;
 		
 		favorites.unshift({ url: normalized, title: finalTitle, type: finalType, thumbnail: finalThumbnail });
