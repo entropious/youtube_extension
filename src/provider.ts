@@ -411,16 +411,54 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			try {
 				const markersMap = data.playerOverlays?.playerOverlayRenderer?.decoratedPlayerBarRenderer?.decoratedPlayerBarRenderer?.playerBar?.multiMarkersPlayerBarRenderer?.markersMap;
 				if (Array.isArray(markersMap)) {
-					const chapterMarker = markersMap.find((m: any) => m.key === 'DESCRIPTION_CHAPTERS' || m.key === 'AUTO_GENRATED_CHAPTERS');
+					// Prioritize manual chapters over auto-generated ones
+					const priority = ['DESCRIPTION_CHAPTERS', 'AUTO_GENRATED_CHAPTERS', 'AUTO_MARKERS', 'DESCRIPTION_COURSE'];
+					let chapterMarker;
+					for (const pKey of priority) {
+						chapterMarker = markersMap.find((m: any) => m.key === pKey);
+						if (chapterMarker) break;
+					}
+					
+					if (!chapterMarker) {
+						chapterMarker = markersMap.find((m: any) => m.value?.chapters);
+					}
+
 					const chapterData = chapterMarker?.value?.chapters;
 					if (Array.isArray(chapterData)) {
 						for (const c of chapterData) {
 							const renderer = c.chapterRenderer;
 							if (renderer) {
+								const thumbs = renderer.thumbnail?.thumbnails;
+								const bestThumb = Array.isArray(thumbs) ? [...thumbs].sort((a: any, b: any) => (b.width || 0) - (a.width || 0))[0] : null;
+								
 								chapters.push({
 									title: renderer.title?.simpleText || renderer.title?.runs?.[0]?.text || 'Untitled Chapter',
 									time: Math.floor((parseInt(renderer.timeRangeStartMillis) || 0) / 1000),
-									thumbnail: renderer.thumbnail?.thumbnails?.[0]?.url
+									thumbnail: bestThumb?.url || thumbs?.[0]?.url
+								});
+							}
+						}
+					}
+				}
+
+				// Fallback: Check engagementPanels if chapters still empty
+				if (chapters.length === 0 && Array.isArray(data.engagementPanels)) {
+					const panel = data.engagementPanels.find((p: any) => 
+						p.targetId === 'engagement-panel-macro-markers' || 
+						p.engagementPanelSectionListRenderer?.panelIdentifier === 'engagement-panel-macro-markers'
+					);
+					const contents = panel?.engagementPanelSectionListRenderer?.content?.macroMarkersListRenderer?.contents;
+					if (Array.isArray(contents)) {
+						for (const item of contents) {
+							const renderer = item.macroMarkersListItemRenderer;
+							if (renderer) {
+								const thumbs = renderer.thumbnail?.thumbnails;
+								const bestThumb = Array.isArray(thumbs) ? [...thumbs].sort((a: any, b: any) => (b.width || 0) - (a.width || 0))[0] : null;
+
+								chapters.push({
+									title: renderer.title?.simpleText || renderer.title?.runs?.[0]?.text || 'Untitled Chapter',
+									time: Math.floor((parseInt(renderer.timeRangeStartMillis) || 0) / 1000),
+									thumbnail: bestThumb?.url || thumbs?.[0]?.url
 								});
 							}
 						}
