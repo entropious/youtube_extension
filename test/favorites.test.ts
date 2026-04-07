@@ -38,10 +38,11 @@ describe('YouTubeViewProvider Favorites', () => {
     it('should resolve title from noembed if not provided when adding favorite', async () => {
         const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
         const resolvedTitle = 'Resolved Title';
+        const mockHtml = `<html><body><script>var ytInitialData = {"contents": {"twoColumnWatchNextResults": {"results": {"results": {"contents": [{"videoPrimaryInfoRenderer": {"title": {"runs": [{"text": "${resolvedTitle}"}]}}}]}}}}};</script></body></html>`;
 
         (global.fetch as sinon.SinonStub).resolves({
             ok: true,
-            json: async () => ({ title: resolvedTitle })
+            text: async () => mockHtml
         });
 
         await (provider as any)._saveFavorite(url);

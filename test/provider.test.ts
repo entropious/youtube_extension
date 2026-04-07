@@ -165,10 +165,11 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         it('should resolve title and update history, favorites and webview title', async () => {
             const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
             const title = 'Never Gonna Give You Up';
+            const mockHtml = `<html><body><script>var ytInitialData = {"contents": {"twoColumnWatchNextResults": {"results": {"results": {"contents": [{"videoPrimaryInfoRenderer": {"title": {"runs": [{"text": "${title}"}]}}}]}}}}};</script></body></html>`;
             
             (global.fetch as sinon.SinonStub).resolves({
                 ok: true,
-                json: async () => ({ title })
+                text: async () => mockHtml
             });
 
             provider._lastUrl = url;
