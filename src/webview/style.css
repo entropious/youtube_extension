@@ -24,9 +24,18 @@ body {
 .top-hitbox, .bottom-hitbox {
 	position: absolute;
 	left: 0;
-	width: min(100%, 600px, max(400px, calc(100% - 170px)));
 	height: 60px;
 	z-index: 999;
+}
+
+.top-hitbox {
+	top: 0;
+	width: min(100%, 600px, max(400px, calc(100% - 170px)));
+}
+
+.bottom-hitbox {
+	bottom: 0;
+	width: 100%;
 }
 
 .top-hitbox {
@@ -614,18 +623,16 @@ iframe {
 	position: absolute;
 	bottom: 0;
 	left: 0;
-	width: min(100%, 600px, max(400px, calc(100% - 170px)));
-	padding: 12px;
+	width: 100%;
+	padding: 12px 16px;
 	background: var(--header-bg);
-	backdrop-filter: blur(12px);
+	backdrop-filter: blur(16px);
 	border-top: 1px solid rgba(255, 255, 255, 0.1);
-	border-right: 1px solid rgba(255, 255, 255, 0.1);
-	border-top-right-radius: 12px;
 	z-index: 1000;
 	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 	transform: translateY(100%);
 	opacity: 0;
-	box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.8);
+	box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.9);
 	display: none;
 	pointer-events: none;
 }
@@ -643,6 +650,7 @@ body.has-chapters .chapters-module {
 
 .chapters-list {
 	display: flex;
+    align-items: center;
 	gap: 12px;
 	overflow-x: auto;
 	padding-bottom: 8px;
@@ -708,5 +716,21 @@ body.has-chapters .chapters-module {
 }
 
 .chapter-item:hover .chapter-item-title {
+    color: #fff;
+}
+
+.chapter-item.active {
+    transform: scale(1.06);
+    z-index: 10;
+}
+
+.chapter-item.active .chapter-thumb {
+    border: 2px solid var(--accent-color);
+    box-shadow: 0 0 20px rgba(255, 0, 0, 0.4);
+}
+
+.chapter-item.active .chapter-item-title {
     color: var(--accent-color);
+    font-weight: 700;
+    opacity: 1;
 }

@@ -55,6 +55,7 @@ const statusText = document.getElementById('status-text');
 const header = document.querySelector('.header');
 const chaptersModule = document.getElementById('chapters-module');
 const chaptersList = document.getElementById('chapters-list');
+const bottomHitbox = document.querySelector('.bottom-hitbox');
 
 let favorites = [];
 let currentChapters = [];
@@ -111,6 +112,18 @@ function saveState() {
 		vscode.setState(state);
 		lastStateJson = stateJson;
 	}
+}
+
+chaptersModule.addEventListener('mouseenter', () => {
+    const active = chaptersList.querySelector('.chapter-item.active');
+    if (active) centerChapter(active);
+});
+
+if (bottomHitbox) {
+    bottomHitbox.addEventListener('mouseenter', () => {
+        const active = chaptersList.querySelector('.chapter-item.active');
+        if (active) centerChapter(active);
+    });
 }
 
 
@@ -443,6 +456,7 @@ window.addEventListener('message', event => {
 		}
 
 		lastCurrentTime = data.time;
+		updateActiveChapter(lastCurrentTime);
 
 
 		
@@ -1129,6 +1143,9 @@ function renderChapters(chapters) {
         chaptersList.appendChild(item);
     });
 
+    // Run initial update for the first load
+    updateActiveChapter(lastCurrentTime);
+
     // Enable mouse wheel horizontal scrolling
     chaptersList.onwheel = (e) => {
         if (e.deltaY !== 0) {
@@ -1163,4 +1180,39 @@ function renderChapters(chapters) {
         const walk = (x - startX) * 2; // scroll-fast factor
         chaptersList.scrollLeft = scrollLeft - walk;
     };
+}
+
+function updateActiveChapter(currentTime) {
+    if (!currentChapters.length) return;
+    
+    // Find the current chapter (last one whose time <= currentTime)
+    let activeIndex = -1;
+    for (let i = 0; i < currentChapters.length; i++) {
+        if (currentChapters[i].time <= currentTime) {
+            activeIndex = i;
+        } else {
+            break;
+        }
+    }
+    
+    const chapterItems = chaptersList.querySelectorAll('.chapter-item');
+    if (activeIndex !== -1 && activeIndex < chapterItems.length) {
+        const activeItem = chapterItems[activeIndex];
+        if (!activeItem.classList.contains('active')) {
+            chapterItems.forEach(item => item.classList.remove('active'));
+            activeItem.classList.add('active');
+            centerChapter(activeItem);
+        }
+    } else {
+        chapterItems.forEach(item => item.classList.remove('active'));
+    }
+}
+
+function centerChapter(element) {
+    const container = chaptersList;
+    if (!container || !element || container.offsetWidth === 0) return;
+    
+    // Use offsetLeft relative to container
+    const scrollLeft = element.offsetLeft - (container.offsetWidth / 2) + (element.offsetWidth / 2);
+    container.scrollLeft = scrollLeft;
 }
