@@ -53,8 +53,11 @@ const autoplayCheck = document.getElementById('autoplay-check');
 const closeListBtn = document.getElementById('close-list-btn');
 const statusText = document.getElementById('status-text');
 const header = document.querySelector('.header');
+const chaptersModule = document.getElementById('chapters-module');
+const chaptersList = document.getElementById('chapters-list');
 
 let favorites = [];
+let currentChapters = [];
 let currentListType = null;
 let currentPlaylistId = null;
 let pendingRequests = {
@@ -567,6 +570,11 @@ window.addEventListener('message', event => {
 			channelBtn.style.display = currentChannelUrl ? 'flex' : 'none';
 			channelBtn.title = currentChannelName ? `Videos from ${currentChannelName}` : "Channel Videos";
 
+			// Reset chapters on new load
+			currentChapters = [];
+			document.body.classList.remove('has-chapters');
+			chaptersList.innerHTML = '';
+
 			updateFavoriteButton();
 			break;
 
@@ -576,7 +584,17 @@ window.addEventListener('message', event => {
             if (message.authorThumbnail) currentChannelThumbnail = message.authorThumbnail;
 			channelBtn.style.display = currentChannelUrl ? 'flex' : 'none';
 			channelBtn.title = currentChannelName ? `Videos from ${currentChannelName}` : "Channel Videos";
-            updateFavoriteButton();
+            
+			if (message.chapters && message.chapters.length > 0) {
+				currentChapters = message.chapters;
+				renderChapters(currentChapters);
+				document.body.classList.add('has-chapters');
+			} else {
+				currentChapters = [];
+				document.body.classList.remove('has-chapters');
+			}
+
+			updateFavoriteButton();
 			break;
 
 
@@ -659,6 +677,9 @@ window.addEventListener('message', event => {
 			playlistListBtn.style.display = 'none';
 			currentPlaylistId = null;
 			currentPlaylistName = null;
+			currentChapters = [];
+			document.body.classList.remove('has-chapters');
+			chaptersList.innerHTML = '';
 			saveState();
 			setTimeout(() => emptyUrlInput.focus(), 100);
 			break;
@@ -1072,4 +1093,74 @@ function pause() {
 			func: 'pauseVideo'
 		}, '*');
 	}
+}
+
+function formatTime(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) {
+        return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function renderChapters(chapters) {
+    chaptersList.innerHTML = '';
+    chapters.forEach((chapter, index) => {
+        const item = document.createElement('div');
+        item.className = 'chapter-item';
+        item.title = chapter.title;
+        
+        item.innerHTML = `
+            <div class="chapter-thumb" style="background-image: url('${chapter.thumbnail || ''}')">
+                <div class="chapter-time-badge">${formatTime(chapter.time)}</div>
+            </div>
+            <div class="chapter-item-title">${chapter.title}</div>
+        `;
+        
+        item.addEventListener('click', () => {
+            if (isIframeReady) {
+                iframe.contentWindow.postMessage({ type: 'load', id: currentVideoId, startTime: chapter.time, autoplay: true }, '*');
+                statusText.textContent = 'Seeking...';
+            }
+        });
+        
+        chaptersList.appendChild(item);
+    });
+
+    // Enable mouse wheel horizontal scrolling
+    chaptersList.onwheel = (e) => {
+        if (e.deltaY !== 0) {
+            e.preventDefault();
+            chaptersList.scrollLeft += e.deltaY;
+        }
+    };
+
+    // Enable click-to-drag scrolling
+    let isDown = false;
+    let startX;
+    let scrollLeft;
+
+    chaptersList.onmousedown = (e) => {
+        isDown = true;
+        chaptersList.classList.add('active-drag');
+        startX = e.pageX - chaptersList.offsetLeft;
+        scrollLeft = chaptersList.scrollLeft;
+    };
+    chaptersList.onmouseleave = () => {
+        isDown = false;
+        chaptersList.classList.remove('active-drag');
+    };
+    chaptersList.onmouseup = () => {
+        isDown = false;
+        chaptersList.classList.remove('active-drag');
+    };
+    chaptersList.onmousemove = (e) => {
+        if (!isDown) return;
+        e.preventDefault();
+        const x = e.pageX - chaptersList.offsetLeft;
+        const walk = (x - startX) * 2; // scroll-fast factor
+        chaptersList.scrollLeft = scrollLeft - walk;
+    };
 }

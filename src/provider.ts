@@ -220,7 +220,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		await this._saveUrl(url);
 
 		// Resolve the info asynchronously
-		const info = await this._resolveVideoInfo(url);
+		const info = await this._fetchVideoDetails(url);
 		if (info?.title) {
 			const title = info.title;
 			// Update history with the resolved title
@@ -247,7 +247,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					type: 'channelUpdated',
 					authorUrl: this._currentChannelUrl,
 					authorName: this._currentChannelName,
-                    authorThumbnail: info.authorThumbnail
+                    authorThumbnail: info.authorThumbnail,
+					chapters: info.chapters
 				});
 			}
 		}
@@ -282,7 +283,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			}
 		}
 
-		const info = !finalTitle ? await this._resolveVideoInfo(normalized) : null;
+		const info = !finalTitle ? await this._fetchVideoDetails(normalized) : null;
 		finalTitle = finalTitle || info?.title || normalized;
 		
 		favorites.unshift({ url: normalized, title: finalTitle, type: finalType, thumbnail: finalThumbnail });
@@ -386,17 +387,61 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		return extractVideoId(urlStr);
 	}
 
-	private async _resolveVideoInfo(url: string): Promise<{title?: string, authorUrl?: string, authorName?: string, authorThumbnail?: string} | undefined> {
+	private _extractInitialData(html: string): any | undefined {
+		const match = html.match(/var ytInitialData = (.*?);<\/script>/);
+		if (!match) return undefined;
 		try {
-			const response = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(url)}`);
-			if (!response.ok) return undefined;
-			const data = (await response.json()) as { title?: unknown, author_url?: unknown, author_name?: unknown, thumbnail_url?: unknown };
+			return JSON.parse(match[1]);
+		} catch (e) {
+			console.error('Error parsing ytInitialData:', e);
+			return undefined;
+		}
+	}
+
+	private async _fetchVideoDetails(url: string): Promise<{ title?: string, authorUrl?: string, authorName?: string, authorThumbnail?: string, chapters?: {title: string, time: number, thumbnail?: string}[] } | undefined> {
+		try {
+			const res = await fetch(url, {
+				headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
+			});
+			const text = await res.text();
+			const data = this._extractInitialData(text);
+			if (!data) return undefined;
+
+			const chapters: {title: string, time: number, thumbnail?: string}[] = [];
+			try {
+				const markersMap = data.playerOverlays?.playerOverlayRenderer?.decoratedPlayerBarRenderer?.decoratedPlayerBarRenderer?.playerBar?.multiMarkersPlayerBarRenderer?.markersMap;
+				if (Array.isArray(markersMap)) {
+					const chapterMarker = markersMap.find((m: any) => m.key === 'DESCRIPTION_CHAPTERS' || m.key === 'AUTO_GENRATED_CHAPTERS');
+					const chapterData = chapterMarker?.value?.chapters;
+					if (Array.isArray(chapterData)) {
+						for (const c of chapterData) {
+							const renderer = c.chapterRenderer;
+							if (renderer) {
+								chapters.push({
+									title: renderer.title?.simpleText || renderer.title?.runs?.[0]?.text || 'Untitled Chapter',
+									time: Math.floor((parseInt(renderer.timeRangeStartMillis) || 0) / 1000),
+									thumbnail: renderer.thumbnail?.thumbnails?.[0]?.url
+								});
+							}
+						}
+					}
+				}
+			} catch (e) { console.error('Error extracting chapters:', e); }
+
+			const metadata = data.updatedMetadataResponse?.updatedMetadata || data.metadata?.videoMetadataRenderer;
+			const microformat = data.microformat?.playerMicroformatRenderer;
+
 			return {
-				title: typeof data.title === 'string' ? data.title : undefined,
-				authorUrl: typeof data.author_url === 'string' ? data.author_url : undefined,
-				authorName: typeof data.author_name === 'string' ? data.author_name : undefined
+				title: microformat?.title?.simpleText || data.contents?.twoColumnWatchNextResults?.results?.results?.contents?.[0]?.videoPrimaryInfoRenderer?.title?.runs?.[0]?.text,
+				authorUrl: microformat?.ownerProfileUrl,
+				authorName: microformat?.ownerGplusProfileUrl, // Fallback if needed, but usually ownerProfileUrl is better
+				authorThumbnail: data.contents?.twoColumnWatchNextResults?.results?.results?.contents?.[1]?.videoSecondaryInfoRenderer?.owner?.videoOwnerRenderer?.thumbnail?.thumbnails?.[0]?.url,
+				chapters: chapters.length > 0 ? chapters : undefined
 			};
-		} catch { return undefined; }
+		} catch (e) {
+			console.error('Error fetching video details:', e);
+			return undefined;
+		}
 	}
 
 	private async _fetchRelated(videoId: string): Promise<string[]> {
@@ -418,11 +463,11 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			const text = await res.text();
 			
 			// 1. Extract Initial Data and Config
-			const initialDataMatch = text.match(/var ytInitialData = (.*?);<\/script>/);
+			const data = this._extractInitialData(text);
 			const apiKeyMatch = text.match(/"INNERTUBE_API_KEY":"(.*?)"/);
 			const clientVersionMatch = text.match(/"clientVersion":"(.*?)"/);
 			
-			if (!initialDataMatch) {
+			if (!data) {
 				// Fallback to simple regex if JSON not found
 				const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g);
 				const ids = [...new Set(Array.from(matches).map(m => m[1]))];
@@ -456,7 +501,6 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			};
 
 			try {
-				const data = JSON.parse(initialDataMatch[1]);
 				continuationToken = processData(data);
 				allIds = [...new Set(allIds)]; // Initial dedup
 				
@@ -526,10 +570,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			const results: {id: string, title: string, thumbnail: string}[] = [];
             let channelThumbnail: string | undefined;
 			
-			const match = text.match(/var ytInitialData = (.*?);<\/script>/);
-			if (match) {
+			const data = this._extractInitialData(text);
+			if (data) {
 				try {
-					const data = JSON.parse(match[1]);
 
                     // Try to get channel thumbnail from Various potential locations
                     channelThumbnail = 

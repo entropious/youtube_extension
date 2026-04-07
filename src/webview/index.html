@@ -65,7 +65,13 @@
 			</div>
 			<span style="font-size:11px; margin-top:16px; opacity:0.6;">Tip: Use Continuous Play to keep the music going.</span>
 		</div>
-		<iframe id="video-frame" src="%%INITIAL_URL%%" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowfullscreen></iframe>
+		<div id="video-frame-container">
+			<iframe id="video-frame" src="%%INITIAL_URL%%" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowfullscreen></iframe>
+		</div>
+		<div class="bottom-hitbox"></div>
+		<div id="chapters-module" class="chapters-module">
+			<div id="chapters-list" class="chapters-list"></div>
+		</div>
 	</div>
 
 	<script>
