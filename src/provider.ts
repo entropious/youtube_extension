@@ -263,9 +263,29 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		if (!normalized) return;
 		const favorites = this._getFavorites();
 		if (favorites.some(f => f.url === normalized)) return;
-		const info = (!title && !type) ? await this._resolveVideoInfo(normalized) : null;
-		const finalTitle = title || info?.title || normalized;
-		favorites.unshift({ url: normalized, title: finalTitle, type, thumbnail });
+
+		let finalType = type;
+		if (!finalType) {
+			if (extractPlaylistId(normalized)) finalType = 'playlist';
+			else if (extractVideoId(normalized)) finalType = 'video';
+		}
+
+		let finalThumbnail = thumbnail;
+		let finalTitle = title;
+
+		if (finalType === 'playlist' && !finalThumbnail) {
+			const playlistId = extractPlaylistId(normalized);
+			if (playlistId) {
+				const playlistData = await this._fetchPlaylist(playlistId);
+				if (playlistData.thumbnail) finalThumbnail = playlistData.thumbnail;
+				if (!finalTitle && playlistData.title) finalTitle = playlistData.title;
+			}
+		}
+
+		const info = (!finalTitle && !finalType) ? await this._resolveVideoInfo(normalized) : null;
+		finalTitle = finalTitle || info?.title || normalized;
+		
+		favorites.unshift({ url: normalized, title: finalTitle, type: finalType, thumbnail: finalThumbnail });
 		await this._state.update(YouTubeViewProvider.favoritesKey, favorites);
 	}
 
@@ -390,7 +410,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		} catch { return []; }
 	}
 
-	private async _fetchPlaylist(playlistId: string): Promise<{ ids: string[], title?: string }> {
+	private async _fetchPlaylist(playlistId: string): Promise<{ ids: string[], title?: string, thumbnail?: string }> {
 		try {
 			const res = await fetch(`https://www.youtube.com/playlist?list=${playlistId}`, {
 				headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
@@ -405,11 +425,17 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			if (!initialDataMatch) {
 				// Fallback to simple regex if JSON not found
 				const matches = text.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g);
-				return { ids: [...new Set(Array.from(matches).map(m => m[1]))] };
+				const ids = [...new Set(Array.from(matches).map(m => m[1]))];
+				let thumbnail: string | undefined;
+				if (ids.length > 0) {
+					thumbnail = `https://i.ytimg.com/vi/${ids[ids.length - 1]}/hqdefault.jpg`;
+				}
+				return { ids, thumbnail };
 			}
 
 			let allIds: string[] = [];
 			let continuationToken: string | undefined;
+			let playlistThumbnail: string | undefined;
 			const apiKey = apiKeyMatch ? apiKeyMatch[1] : '';
 			const clientVersion = clientVersionMatch ? clientVersionMatch[1] : '2.20240320.01.00';
 
@@ -443,6 +469,12 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					this._currentPlaylistTitle = data.header?.playlistHeaderRenderer?.title?.simpleText || 
 						data.header?.playlistHeaderRenderer?.title?.runs?.[0]?.text;
 				}
+
+				// Extract playlist thumbnail
+				playlistThumbnail = metadata?.thumbnail?.thumbnails?.[0]?.url ||
+					data.header?.playlistHeaderRenderer?.thumbnail?.thumbnails?.[0]?.url ||
+					data.sidebar?.playlistSidebarRenderer?.items?.[0]?.playlistSidebarPrimaryInfoRenderer?.thumbnail?.thumbnails?.[0]?.url;
+
 			} catch (e) {
 				console.error('Error parsing ytInitialData:', e);
 			}
@@ -471,7 +503,13 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				}
 			}
 
-			return { ids: allIds, title: this._currentPlaylistTitle };
+			// If YouTube doesn't give a thumbnail, take it from the very last video.
+			if (!playlistThumbnail && allIds.length > 0) {
+				const lastVideoId = allIds[allIds.length - 1];
+				playlistThumbnail = `https://i.ytimg.com/vi/${lastVideoId}/hqdefault.jpg`;
+			}
+
+			return { ids: allIds, title: this._currentPlaylistTitle, thumbnail: playlistThumbnail };
 		} catch (e) { 
 			console.error('Playlist fetch failed:', e);
 			return { ids: [] }; 
