@@ -653,7 +653,7 @@ body.has-chapters .chapters-module {
     align-items: center;
 	gap: 12px;
 	overflow-x: auto;
-	padding-bottom: 8px;
+	padding: 12px 0 8px 0;
 	scrollbar-width: none; /* Firefox */
     cursor: grab;
     user-select: none;
@@ -671,6 +671,8 @@ body.has-chapters .chapters-module {
 
 .chapter-item {
 	flex: 0 0 140px;
+    width: 140px;
+    max-width: 140px;
 	cursor: pointer;
 	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	position: relative;
