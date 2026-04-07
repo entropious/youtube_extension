@@ -288,7 +288,8 @@ favCurrentBtn.addEventListener('click', () => {
         vscode.postMessage({ 
             type: 'addFavorite', 
             url: lastLoadedOriginalUrl, 
-            title: statusText.textContent === 'Playing' || statusText.textContent === 'Paused' ? undefined : statusText.textContent 
+            title: statusText.textContent === 'Playing' || statusText.textContent === 'Paused' ? undefined : statusText.textContent,
+            itemType: currentPlaylistId ? 'playlist' : 'video'
         });
     }
 });
