@@ -107,6 +107,62 @@ describe('Webview Script', () => {
                 value: 'dQw4w9WgXcQ'
             }))).to.be.true;
         });
+
+        it('should NOT close list when mouse moves from list to header', () => {
+            const resultsContainer = document.getElementById('results-container')!;
+            const header = document.querySelector('.header')!;
+            const historyBtn = document.getElementById('history-btn')!;
+            
+            // Set pending state and dispatch message
+            historyBtn.click();
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: { type: 'history', value: [{ url: 'https://youtube.com/watch?v=123', title: 'Test' }] }
+            }));
+            expect(resultsContainer.style.display).to.equal('flex');
+            
+            // Dispatch mouseleave on list, moving to header
+            const event = new window.MouseEvent('mouseleave', { relatedTarget: header });
+            resultsContainer.dispatchEvent(event);
+            
+            expect(resultsContainer.style.display).to.equal('flex'); // Should STAY open
+        });
+
+        it('should close list when mouse moves from header to elsewhere', () => {
+            const resultsContainer = document.getElementById('results-container')!;
+            const header = document.querySelector('.header')!;
+            const historyBtn = document.getElementById('history-btn')!;
+            
+            // Show a list first
+            historyBtn.click();
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: { type: 'history', value: [{ url: 'https://youtube.com/watch?v=123', title: 'Test' }] }
+            }));
+            expect(resultsContainer.style.display).to.equal('flex');
+            
+            // Dispatch mouseleave on header, moving to null (away)
+            const event = new window.MouseEvent('mouseleave', { relatedTarget: null });
+            header.dispatchEvent(event);
+            
+            expect(resultsContainer.style.display).to.equal('none'); // Should CLOSE
+        });
+
+        it('should NOT close list when mouse moves from header BACK to list', () => {
+            const resultsContainer = document.getElementById('results-container')!;
+            const header = document.querySelector('.header')!;
+            const historyBtn = document.getElementById('history-btn')!;
+            
+            // Show a list first
+            historyBtn.click();
+            window.dispatchEvent(new window.MessageEvent('message', {
+                data: { type: 'history', value: [{ url: 'https://youtube.com/watch?v=123', title: 'Test' }] }
+            }));
+            
+            // Dispatch mouseleave on header, moving to results list
+            const event = new window.MouseEvent('mouseleave', { relatedTarget: resultsContainer });
+            header.dispatchEvent(event);
+            
+            expect(resultsContainer.style.display).to.equal('flex'); // Should STAY open
+        });
     });
 
     describe('Message Handling', () => {

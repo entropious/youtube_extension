@@ -137,7 +137,7 @@ describe('YouTubeViewProvider Favorites', () => {
         const url = 'https://www.youtube.com/playlist?list=PL123';
         const title = 'Test Playlist';
 
-        await (provider as any)._saveFavorite(url, title, 'playlist');
+        await (provider as any)._saveFavorite(url, title, 'playlist', 'https://mock-thumb.jpg');
         
         const favorites = provider._getFavorites();
         expect(favorites).to.have.lengthOf(1);
