@@ -245,6 +245,87 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
             expect(openInPanelSpy.calledWith('v1', 'T1', 50)).to.be.true;
         });
     });
+
+    describe('Manual Pause Syncing', () => {
+        it('should set _isManualPause to true when active view is paused', async () => {
+            const webview = createMockWebview();
+            const view = createMockWebviewView(webview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+            
+            const handler = webview.onDidReceiveMessage.getCall(0).args[0];
+            
+            // 1. Start playing to reset pause state and set active view
+            await handler({ type: 'playbackStatus', status: 'playing' });
+            expect((provider as any)._isManualPause).to.be.false;
+            expect((provider as any)._isTabActive).to.be.false; // sidebar view is reported as isTab=false
+
+            // 2. Pause the active view
+            await handler({ type: 'playbackStatus', status: 'paused' });
+            expect((provider as any)._isManualPause).to.be.true;
+        });
+
+        it('should reset _isManualPause to false when playing starts', async () => {
+            (provider as any)._isManualPause = true;
+            const webview = createMockWebview();
+            const view = createMockWebviewView(webview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+            const handler = webview.onDidReceiveMessage.getCall(0).args[0];
+
+            await handler({ type: 'playbackStatus', status: 'playing' });
+            expect((provider as any)._isManualPause).to.be.false;
+        });
+
+        it('should NOT set _isManualPause when inactive view is paused', async () => {
+            const webview = createMockWebview();
+            const view = createMockWebviewView(webview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+            const handler = webview.onDidReceiveMessage.getCall(0).args[0];
+
+            // Set Tab as active
+            (provider as any)._isTabActive = true;
+            
+            // Send pause from Sidebar
+            await handler({ type: 'playbackStatus', status: 'paused' });
+            expect((provider as any)._isManualPause).to.be.false;
+        });
+
+        it('should disable autoplay when switching same video while manually paused', async () => {
+            const url = 'https://youtube.com/watch?v=123';
+            
+            const webview = createMockWebview();
+            const view = createMockWebviewView(webview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+            
+            (provider as any)._lastUrl = url;
+            (provider as any)._isManualPause = true;
+            (provider as any)._sidebarHasInteracted = true;
+            
+            // Call loadUrl for the same video in sidebar
+            await provider.loadUrl(url, 0, 'sidebar');
+            
+            const message = webview.postMessage.lastCall.args[0];
+            expect(message.type).to.equal('loadUrl');
+            expect(message.autoplay).to.be.false;
+        });
+
+        it('should enable autoplay for new video even if previously manually paused', async () => {
+            const oldUrl = 'https://youtube.com/watch?v=123';
+            const newUrl = 'https://youtube.com/watch?v=456';
+            
+            const webview = createMockWebview();
+            const view = createMockWebviewView(webview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+
+            (provider as any)._lastUrl = oldUrl;
+            (provider as any)._isManualPause = true;
+            (provider as any)._sidebarHasInteracted = true;
+            
+            await provider.loadUrl(newUrl, 0, 'sidebar');
+            
+            const message = webview.postMessage.lastCall.args[0];
+            expect(message.autoplay).to.be.true;
+        });
+    });
 });
 
 
