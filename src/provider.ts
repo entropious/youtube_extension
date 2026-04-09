@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { HistoryEntry, extractVideoId, extractPlaylistId, formatYoutubeUrl, parseEntries } from './utils';
 
+// глобальное управление паузой убрать
+
 export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	public static readonly viewType = 'youtube-panel.view';
@@ -18,6 +20,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	private _sidebarView?: vscode.WebviewView;
 	public _tabPanel?: vscode.WebviewPanel;
 	private _isTabActive = false;
+	private _isManualPause = false;
 	private _sidebarHasInteracted = false;
 	private _tabHasInteracted = false;
 	public _lastUrl?: string;
@@ -89,6 +92,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	}
  
 	public async loadUrl(url: string, startTime?: number, targetView?: 'tab' | 'sidebar'): Promise<void> {
+		const isSwitching = url === this._lastUrl;
 		const savePromise = this.saveCurrentState();
 		void this._handleLoadRequest(url);
 
@@ -108,7 +112,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			hasInteracted = this._isTabActive ? this._tabHasInteracted : this._sidebarHasInteracted;
 		}
 
-		const formattedUrl = this._formatYoutubeUrl(url, startTime, hasInteracted);
+		const autoplay = hasInteracted && !(isSwitching && this._isManualPause);
+
+		const formattedUrl = this._formatYoutubeUrl(url, startTime, autoplay);
 		const playlistId = extractPlaylistId(url);
 		const videoId = extractVideoId(url) || '';
 		
@@ -120,7 +126,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			value: formattedUrl,
 			originalUrl: url,
 			startTime: startTime,
-			autoplay: hasInteracted,
+			autoplay: autoplay,
 			targetView: targetView,
 			playlistId: playlistId,
 			canPrev: canPrev,
@@ -1017,8 +1023,13 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					else this._sidebarHasInteracted = true;
 					
 					if (data.status === 'playing') {
+						this._isManualPause = false;
 						this._isTabActive = isTab;
 						this.pauseAllExcept(isTab);
+					} else if (data.status === 'paused') {
+						if (isTab === this._isTabActive) {
+							this._isManualPause = true;
+						}
 					}
 					break;
 				case 'timeUpdate': {
