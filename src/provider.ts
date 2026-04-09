@@ -3,8 +3,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { HistoryEntry, extractVideoId, extractPlaylistId, formatYoutubeUrl, parseEntries } from './utils';
 
-// глобальное управление паузой убрать
-
 export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	public static readonly viewType = 'youtube-panel.view';
