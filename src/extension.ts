@@ -251,7 +251,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			});
 			if (url && provider) {
 				const resolvedUrl = await provider.resolveUrl(url);
-				provider.loadUrl(resolvedUrl);
+				provider.loadUrl(resolvedUrl, undefined, undefined, true);
 			}
 		})
 	);
