@@ -89,10 +89,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
  
-	public async loadUrl(url: string, startTime?: number, targetView?: 'tab' | 'sidebar'): Promise<void> {
+	public async loadUrl(url: string, startTime?: number, targetView?: 'tab' | 'sidebar', forcePlaylistRefresh = false): Promise<void> {
 		const isSwitching = url === this._lastUrl;
 		const savePromise = this.saveCurrentState();
-		void this._handleLoadRequest(url);
+		void this._handleLoadRequest(url, forcePlaylistRefresh);
 
 		if (startTime === undefined) {
 			startTime = this._getTimestamp(url);
@@ -145,7 +145,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		return formatYoutubeUrl(url, startTime, autoplay, this._getProxyPort());
 	}
 
-	private async _loadUrlTargeted(webview: vscode.Webview, isTab: boolean, url: string, startTime?: number) {
+	private async _loadUrlTargeted(webview: vscode.Webview, isTab: boolean, url: string, startTime?: number, forcePlaylistRefresh = false) {
 		this._isTabActive = isTab;
 		if (this._lastUrl) await this._saveTimestamp(this._lastUrl, this._lastTime, true);
 		
@@ -153,7 +153,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._lastTime = startTime ?? this._getTimestamp(url);
 
 		const finalStartTime = this._lastTime || 0;
-		void this._handleLoadRequest(url);
+		void this._handleLoadRequest(url, forcePlaylistRefresh);
 
 		const hasInteracted = isTab ? this._tabHasInteracted : this._sidebarHasInteracted;
 
@@ -197,10 +197,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		await this._state.update(YouTubeViewProvider.historyKey, deduped.slice(0, 50));
 	}
 
-	public async _handleLoadRequest(url: string): Promise<void> {
+	public async _handleLoadRequest(url: string, forcePlaylistRefresh = false): Promise<void> {
 		// Detect playlist
 		const playlistId = extractPlaylistId(url);
-		if (playlistId && playlistId !== this._playlistId) {
+		if (playlistId && (playlistId !== this._playlistId || forcePlaylistRefresh)) {
 			this._playlistId = playlistId;
 			const playlistData = await this._fetchPlaylist(playlistId);
 			this._currentPlaylist = playlistData.ids;
@@ -1058,7 +1058,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						webview.postMessage({ type: 'searchResults', results, continuation, query: trimmedInput });
 					} else {
 						const resolvedUrl = await this.resolveUrl(data.value);
-						await this._loadUrlTargeted(webview, isTab, resolvedUrl);
+						await this._loadUrlTargeted(webview, isTab, resolvedUrl, undefined, data.forceRefreshPlaylist !== false);
 					}
 					break;
 				}
@@ -1125,8 +1125,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'requestPlaylist': {
 					const pId = data.url ? extractPlaylistId(data.url) : this._playlistId;
 					if (pId) {
-						if (pId !== this._playlistId) {
-							// If different playlist, need to fetch it first
+						if (pId !== this._playlistId || !!data.url) {
+							// If different playlist or explicitly requested, fetch it
 							const playlistData = await this._fetchPlaylist(pId);
 							const playlistEntries = playlistData.ids.map(id => ({
 								url: `https://www.youtube.com/watch?v=${id}&list=${pId}`,

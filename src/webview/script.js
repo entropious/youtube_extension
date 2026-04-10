@@ -367,7 +367,7 @@ header.addEventListener('mouseleave', (e) => {
     }
 });
 
-function loadVideo(url) {
+function loadVideo(url, forceRefreshPlaylist = true) {
 	const normalized = normalizeInput(url);
 	
 	if (!normalized) {
@@ -383,7 +383,7 @@ function loadVideo(url) {
 		statusText.textContent = 'Loading...';
 	}
 
-	vscode.postMessage({ type: 'requestLoad', value: normalized });
+	vscode.postMessage({ type: 'requestLoad', value: normalized, forceRefreshPlaylist });
 
 
 	
@@ -825,7 +825,7 @@ function renderList(title, items, type, onClearAll, append = false, extraElement
                     pendingRequests.playlist = true;
                     vscode.postMessage({ type: 'requestPlaylist', url: linkUrl });
                 } else {
-				    loadVideo(linkUrl);
+				    loadVideo(linkUrl, type !== 'playlist');
                 }
 			});
 
