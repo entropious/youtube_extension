@@ -53,6 +53,12 @@ YouTube tightens its bot checks from time to time and can refuse a video to an a
 > **Where are the controls?**
 > To stay out of your way while coding, everything (search bar, buttons) is hidden by default. **Simply hover your mouse over the top-left corner** of the player at any time to instantly reveal the controls.
 
+## 🤖 Claude Sync
+
+The switch in the top right ties playback to Claude Code: video plays while
+Claude is working and pauses the moment it needs you. A pause you set by hand
+always wins — Claude never restarts a video you stopped.
+
 ## ⌨️ Commands
 
 | Command | Description | Shortcut |
@@ -61,6 +67,7 @@ YouTube tightens its bot checks from time to time and can refuse a video to an a
 | `YouTube: Play/Pause` | Toggle playback of the active player. | `cmd+alt+p` |
 | `YouTube: Next Video` | Skip to the next related video. | `cmd+alt+o` |
 | `YouTube: Prev Video` | Go back to the previous video in your playlist. | - |
+| `YouTube: Toggle Claude Sync` | Follow Claude Code: play while it works, pause when it waits. | - |
 | `YouTube: Open in Panel`| Move sidebar player to an editor tab. | - |
 
 ## 🛠️ Configuration

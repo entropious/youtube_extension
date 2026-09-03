@@ -56,6 +56,7 @@ const header = document.querySelector('.header');
 const chaptersModule = document.getElementById('chapters-module');
 const chaptersList = document.getElementById('chapters-list');
 const setupGate = document.getElementById('setup-gate');
+const claudeToggle = document.getElementById('claude-toggle');
 
 let favorites = [];
 let currentChapters = [];
@@ -326,8 +327,15 @@ function checkTools(refresh) {
 document.getElementById('setup-recheck').addEventListener('click', () => checkTools(true));
 checkTools(false);
 
+if (claudeToggle) {
+	claudeToggle.addEventListener('change', () => {
+		vscode.postMessage({ type: 'toggleFollowClaude', value: claudeToggle.checked });
+	});
+}
+
 vscode.postMessage({ type: 'webviewReady' });
 vscode.postMessage({ type: 'requestFavorites' });
+vscode.postMessage({ type: 'requestFollowClaude' });
 
 input.addEventListener('keydown', (e) => {
 	if (e.key === 'Enter') {
@@ -553,6 +561,13 @@ window.addEventListener('message', event => {
 
 	if (data && data.type === 'pointerZone') {
 		scheduleChapters(Boolean(data.bottom));
+	}
+
+	// Play or pause pressed inside the player frame is a decision by hand, and
+	// has to outrank Claude the same way the panel's own buttons do.
+	if (data && data.type === 'userToggle') {
+		pausedByHand = !data.playing;
+		if (data.playing) autoPauseReasons.clear();
 	}
 
 	if (data && data.type === 'barHeight') {
@@ -795,6 +810,16 @@ window.addEventListener('message', event => {
 			break;
 		case 'pause':
 			pause();
+			break;
+		case 'autoPause':
+			autoPause(message.reason);
+			break;
+		case 'autoResume':
+			autoResume(message.reason);
+			break;
+		case 'setFollowClaude':
+			if (claudeToggle) claudeToggle.checked = !!message.value;
+			document.body.classList.toggle('claude-sync-on', !!message.value);
 			break;
 		case 'nextVideo':
 			requestNext(true);
@@ -1218,14 +1243,41 @@ function updatePlaylistHeaderStar() {
 }
 
 
-function togglePlay() {
-	const command = isPaused ? 'playVideo' : 'pauseVideo';
+// A pause set by hand outranks every automatic one: Claude may hold its own
+// reason, but it never resumes a video the viewer stopped, and dropping that
+// reason does not override the choice either.
+let pausedByHand = false;
+const autoPauseReasons = new Set();
+
+function sendPlayback(command) {
 	if (iframe && iframe.contentWindow) {
-		iframe.contentWindow.postMessage({
-			event: 'command',
-			func: command
-		}, '*');
+		iframe.contentWindow.postMessage({ event: 'command', func: command }, '*');
 	}
+}
+
+function setPlayingByHand(playing) {
+	pausedByHand = !playing;
+	if (playing) {
+		autoPauseReasons.clear();
+		sendPlayback('playVideo');
+	} else {
+		sendPlayback('pauseVideo');
+	}
+}
+
+function autoPause(reason) {
+	if (pausedByHand) return;
+	autoPauseReasons.add(reason);
+	sendPlayback('pauseVideo');
+}
+
+function autoResume(reason) {
+	autoPauseReasons.delete(reason);
+	if (!pausedByHand && autoPauseReasons.size === 0) sendPlayback('playVideo');
+}
+
+function togglePlay() {
+	setPlayingByHand(isPaused);
 }
 
 // The player lives in an iframe, so a keypress only reaches it while it holds

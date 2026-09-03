@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { HistoryEntry, extractVideoId, extractPlaylistId, formatYoutubeUrl, parseEntries } from './utils';
+import * as claudeHooks from './claudeHooks';
 
 export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
@@ -14,6 +15,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public static readonly playlistVideosKey = 'youtube-playlist-videos';
 	public static readonly playlistTitlesKey = 'youtube-playlist-titles';
 	public static readonly playlistTitleKey = 'youtube-playlist-title';
+	public static readonly followClaudeKey = 'youtube-follow-claude';
 
 	private _sidebarView?: vscode.WebviewView;
 	public _tabPanel?: vscode.WebviewPanel;
@@ -30,16 +32,113 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	private _currentChannelUrl?: string;
 	private _currentChannelName?: string;
 	private _currentPlaylistTitle?: string;
+	public followClaudeEnabled = false;
+	private _claudeWatcher?: fs.FSWatcher;
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
 		private readonly _state: vscode.Memento,
 		private readonly _getProxyPort: () => number
-	) { 
+	) {
 		this._playlistId = this._state.get<string>(YouTubeViewProvider.playlistIdKey);
 		this._currentPlaylist = this._state.get<string[]>(YouTubeViewProvider.playlistVideosKey, []);
 		this._playlistTitles = this._state.get<Record<string, string>>(YouTubeViewProvider.playlistTitlesKey, {});
 		this._currentPlaylistTitle = this._state.get<string>(YouTubeViewProvider.playlistTitleKey);
+
+		this.followClaudeEnabled = this._state.get<boolean>(YouTubeViewProvider.followClaudeKey, false);
+		if (this.followClaudeEnabled) {
+			this.enableClaudeSync();
+		}
+	}
+
+	public dispose() {
+		this.stopClaudeWatcher();
+	}
+
+	/** Installs the Claude Code hooks (if missing) and follows the state they write. */
+	private enableClaudeSync() {
+		try {
+			if (!claudeHooks.hooksInstalled()) {
+				claudeHooks.installHooks();
+			} else {
+				// The script may be gone even when settings.json still points at it.
+				claudeHooks.writeHookScript();
+			}
+		} catch (err) {
+			console.error('Failed to install Claude hooks:', err);
+			vscode.window.showErrorMessage(`YouTube Panel: could not install Claude Code hooks (${err})`);
+			return;
+		}
+
+		this.startClaudeWatcher();
+		this.applyClaudeState();
+	}
+
+	public startClaudeWatcher() {
+		if (this._claudeWatcher) {
+			return;
+		}
+
+		try {
+			// The directory is watched rather than the file: the hook replaces the
+			// file by rename, and a watch on the old inode would go deaf.
+			this._claudeWatcher = fs.watch(claudeHooks.stateDir, { persistent: false }, (_eventType, filename) => {
+				if (filename === claudeHooks.stateFileName) {
+					this.applyClaudeState();
+				}
+			});
+		} catch (err) {
+			console.error('Failed to attach Claude watcher:', err);
+		}
+	}
+
+	public stopClaudeWatcher() {
+		if (this._claudeWatcher) {
+			this._claudeWatcher.close();
+			this._claudeWatcher = undefined;
+		}
+	}
+
+	/** Plays while Claude works, pauses the moment it waits for you. */
+	private applyClaudeState() {
+		if (claudeHooks.readState() === 'busy') {
+			this.autoResume('claude');
+		} else {
+			this.autoPause('claude');
+		}
+	}
+
+	/** Pauses on behalf of `reason`, unless the viewer paused by hand. */
+	public autoPause(reason: string) {
+		this.postToAll({ type: 'autoPause', reason });
+	}
+
+	/** Drops `reason`; playback resumes once nothing else holds it paused. */
+	public autoResume(reason: string) {
+		this.postToActive({ type: 'autoResume', reason });
+	}
+
+	public toggleClaudeSync() {
+		this.setClaudeSync(!this.followClaudeEnabled);
+	}
+
+	public setClaudeSync(value: boolean) {
+		this.followClaudeEnabled = value;
+		this._state.update(YouTubeViewProvider.followClaudeKey, value);
+		this.postToAll({ type: 'setFollowClaude', value });
+
+		if (value) {
+			this.enableClaudeSync();
+			return;
+		}
+
+		this.stopClaudeWatcher();
+		this.autoResume('claude');
+		try {
+			claudeHooks.uninstallHooks();
+		} catch (err) {
+			console.error('Failed to remove Claude hooks:', err);
+		}
 	}
 
 	private postToAll(message: any) {
@@ -1070,8 +1169,15 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 				case 'requestHistory': 
 					webview.postMessage({ type: 'history', value: this._getHistory() }); 
 					break;
-				case 'requestFavorites': 
-					webview.postMessage({ type: 'favorites', value: this._getFavorites() }); 
+				case 'requestFavorites':
+					webview.postMessage({ type: 'favorites', value: this._getFavorites() });
+					break;
+					// The panel asks on load, since the switch has to show the stored choice.
+				case 'requestFollowClaude':
+					webview.postMessage({ type: 'setFollowClaude', value: this.followClaudeEnabled });
+					break;
+				case 'toggleFollowClaude':
+					this.setClaudeSync(!!data.value);
 					break;
 				case 'addFavorite': 
 					await this._saveFavorite(data.url, data.title, data.itemType, data.thumbnail); 
