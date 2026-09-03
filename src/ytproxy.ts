@@ -34,6 +34,9 @@ let tools: ToolConfig = {
 export function setToolConfig(config: Partial<ToolConfig>): void {
 	tools = { ...tools, ...config };
 	streamCache.clear();
+	// A lookup already in flight used the previous paths and format, so it must
+	// not be handed to anyone who asks after the change.
+	pending.clear();
 	toolReport = null;
 }
 
@@ -277,6 +280,112 @@ export async function resolveStream(videoId: string): Promise<StreamInfo> {
 	return lookup;
 }
 
+type WarmStream = {
+	videoId: string;
+	startAt: number;
+	/** Resolves once ffmpeg is running; the request may arrive before that. */
+	ready: Promise<ReturnType<typeof runTool>>;
+	proc?: ReturnType<typeof runTool>;
+	buffered: Buffer[];
+	size: number;
+	startedAt: number;
+};
+
+/**
+ * Enough of a head start to cover the page load, and small enough that a video
+ * nobody ends up watching costs little.
+ */
+const WARM_LIMIT_BYTES = 12 * 1024 * 1024;
+const WARM_TTL_MS = 60 * 1000;
+
+let warmStream: WarmStream | null = null;
+
+function dropWarmStream() {
+	const warm = warmStream;
+	if (!warm) return;
+	warmStream = null;
+	// The process may still be starting; kill it whenever it appears.
+	void warm.ready.then(proc => proc.kill('SIGKILL')).catch(() => undefined);
+}
+
+/**
+ * Starts a video before the player asks for it.
+ *
+ * Two things make a start slow, and neither depends on the panel: yt-dlp takes
+ * seconds to resolve a video, and ffmpeg then has to fetch HLS playlists and
+ * their first segments — together most of the wait. The panel knows which video
+ * is coming as soon as it is chosen, so both run while the player page is still
+ * loading, and what ffmpeg produces meanwhile is held until the page asks for
+ * it.
+ */
+export function prewarmStream(videoId: string, startAt = 0): void {
+	if (!videoId) return;
+	if (warmStream && warmStream.videoId === videoId && warmStream.startAt === startAt) return;
+
+	dropWarmStream();
+
+	const warm: WarmStream = {
+		videoId,
+		startAt,
+		buffered: [],
+		size: 0,
+		startedAt: Date.now(),
+		ready: resolveStream(videoId).then(stream => {
+			const proc = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt));
+			warm.proc = proc;
+
+			proc.stdout.on('data', (chunk: Buffer) => {
+				warm.buffered.push(chunk);
+				warm.size += chunk.length;
+				// Held, not dropped: the pipe resumes when the page takes over.
+				if (warm.size >= WARM_LIMIT_BYTES) proc.stdout.pause();
+			});
+			proc.on('close', () => { if (warmStream === warm) warmStream = null; });
+
+			return proc;
+		})
+	};
+
+	warmStream = warm;
+	// A video nobody opens must not keep a process and its buffer alive.
+	setTimeout(() => { if (warmStream === warm) dropWarmStream(); }, WARM_TTL_MS);
+	warm.ready.catch(() => { if (warmStream === warm) warmStream = null; });
+}
+
+/**
+ * Hands the warmed stream over to a request for the same video.
+ *
+ * The request usually arrives while the warm-up is still resolving, so this
+ * waits for it rather than starting a second ffmpeg beside it.
+ */
+async function takeWarmStream(videoId: string, startAt: number): Promise<WarmStream | null> {
+	const warm = warmStream;
+	if (!warm || warm.videoId !== videoId || warm.startAt !== startAt) return null;
+	if (Date.now() - warm.startedAt > WARM_TTL_MS) { dropWarmStream(); return null; }
+
+	warmStream = null;
+	try {
+		const proc = await warm.ready;
+		proc.stdout.removeAllListeners('data');
+		return warm;
+	} catch {
+		// The warm-up failed; the request resolves the video on its own and
+		// reports what went wrong.
+		return null;
+	}
+}
+
+/**
+ * Resolves a video into the cache without fetching any of it.
+ *
+ * Used for what is likely to be played next: the lookup is the slow half of a
+ * start, and doing it early costs one yt-dlp run and no traffic.
+ */
+export function prefetchStream(videoId: string): void {
+	if (!videoId) return;
+	void resolveStream(videoId).catch(() => undefined);
+}
+
 /** Drops a cached stream so the next request resolves it again. */
 export function invalidateStream(videoId: string): void {
 	streamCache.delete(videoId);
@@ -305,22 +414,35 @@ function headerArgs(headers: Record<string, string>): string[] {
 export async function handleMedia(res: http.ServerResponse, videoId: string, startAt = 0): Promise<void> {
 	if (!videoId) { res.writeHead(400); res.end('Missing video id'); return; }
 
-	let stream: StreamInfo;
-	try {
-		stream = await resolveStream(videoId);
-	} catch (e) {
-		res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
-		res.end(e instanceof Error ? e.message : String(e));
-		return;
-	}
+	const warm = await takeWarmStream(videoId, startAt);
+	let ff: ReturnType<typeof runTool>;
 
-	const ff = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt));
+	if (warm?.proc) {
+		ff = warm.proc;
+	} else {
+		let stream: StreamInfo;
+		try {
+			stream = await resolveStream(videoId);
+		} catch (e) {
+			res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+			res.end(e instanceof Error ? e.message : String(e));
+			return;
+		}
+
+		ff = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt));
+	}
 
 	res.writeHead(200, {
 		'Content-Type': 'video/mp4',
 		'Access-Control-Allow-Origin': '*',
 		'Cache-Control': 'no-cache'
 	});
+
+	// Whatever the warm-up already fetched goes out first, then the live pipe.
+	if (warm?.buffered.length) {
+		res.write(Buffer.concat(warm.buffered));
+		ff.stdout.resume();
+	}
 
 	ff.stdout.pipe(res);
 	ff.on('error', () => res.end());
@@ -660,10 +782,16 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		showSpinner(true);
 		paint();
 
+		// The stream is asked for straight away rather than after the metadata:
+		// both wait on the same lookup server-side, so starting them together
+		// takes a whole round of it off the start. Only the duration — the seek
+		// bar and the time label — has to wait for the answer.
+		startStream(startAt, autoplay);
+
 		loadInfo(id).then(function(info) {
 			if (videoId !== id) return;
 			duration = info.duration || 0;
-			startStream(startAt, autoplay);
+			paint();
 			send({ type: 'playerReady', videoId: id });
 		}).catch(function(err) {
 			if (videoId !== id) return;

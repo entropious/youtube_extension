@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { HistoryEntry, extractVideoId, extractPlaylistId, formatYoutubeUrl, parseEntries } from './utils';
 import * as claudeHooks from './claudeHooks';
+import { prefetchStream, prewarmStream } from './ytproxy';
 
 export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
@@ -214,6 +215,17 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		const formattedUrl = this._formatYoutubeUrl(url, startTime, autoplay);
 		const playlistId = extractPlaylistId(url);
 		const videoId = extractVideoId(url) || '';
+
+		// Resolving and fetching the first seconds is most of a start, and neither
+		// depends on the panel: both run while the player page is still loading.
+		prewarmStream(videoId, startTime);
+
+		// The next video in a playlist is resolved while this one plays, so
+		// skipping ahead does not pay for the lookup again.
+		if (playlistId && videoId) {
+			const next = this._currentPlaylist[this._currentPlaylist.indexOf(videoId) + 1];
+			if (next) prefetchStream(next);
+		}
 		
 		this._syncPlaylistState(playlistId);
 		const canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
