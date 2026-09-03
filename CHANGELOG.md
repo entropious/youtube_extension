@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Playback starts about twice as fast. The two slow steps — yt-dlp resolving the
+  video and ffmpeg fetching the first HLS segments — now run while the player
+  page is still loading, instead of one after the other once it asks. What
+  ffmpeg produces meanwhile is held and handed over when the page arrives. The
+  next video in a playlist is resolved while the current one plays.
+
 ## 0.4.1
 
 ### Added
