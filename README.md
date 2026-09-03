@@ -26,6 +26,12 @@ Experience YouTube like never before, right from your editor! Watch tutorials, l
   - **Hover-to-Reveal Controls**: Keep your workspace clean—controls stay hidden until you need them.
 
 
+## 📦 Requirements
+
+Playback goes through [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ffmpeg](https://ffmpeg.org), so both have to be installed and reachable — on macOS, `brew install yt-dlp ffmpeg`. If they live outside your `PATH`, point `youtube-panel.ytDlpPath` and `youtube-panel.ffmpegPath` at them.
+
+YouTube serves part of its catalogue to signed-in sessions only. When a video is refused with a bot check, set `youtube-panel.cookiesFromBrowser` to the browser you are signed in with (`chrome`, `firefox`, `safari`, `edge`, `brave`), or `youtube-panel.cookiesFile` to an exported cookie file.
+
 ## 🚀 Getting Started
 
 1.  **Open** the **YouTube** view from the Activity Bar (Sidebar).
@@ -51,6 +57,14 @@ Experience YouTube like never before, right from your editor! Watch tutorials, l
 ## 🛠️ Configuration
 
 The extension uses VS Code's global state to securely store your history and settings locally.
+
+| Setting | Description | Default |
+| --- | --- | --- |
+| `youtube-panel.ytDlpPath` | Path to the yt-dlp executable. | `yt-dlp` |
+| `youtube-panel.ffmpegPath` | Path to the ffmpeg executable. | `ffmpeg` |
+| `youtube-panel.maxHeight` | Maximum video height, in pixels. | `1080` |
+| `youtube-panel.cookiesFromBrowser` | Browser to take YouTube cookies from. | empty |
+| `youtube-panel.cookiesFile` | Netscape-format cookie file to use instead. | empty |
 
 ## 📝 License
 

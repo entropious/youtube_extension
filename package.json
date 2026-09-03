@@ -23,6 +23,42 @@
   },
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "YouTube Panel",
+      "properties": {
+        "youtube-panel.ytDlpPath": {
+          "type": "string",
+          "default": "yt-dlp",
+          "description": "Path to the yt-dlp executable used to resolve video streams."
+        },
+        "youtube-panel.ffmpegPath": {
+          "type": "string",
+          "default": "ffmpeg",
+          "description": "Path to the ffmpeg executable used to serve video to the player."
+        },
+        "youtube-panel.maxHeight": {
+          "type": "number",
+          "default": 1080,
+          "enum": [
+            360,
+            480,
+            720,
+            1080
+          ],
+          "description": "Maximum video height, in pixels."
+        },
+        "youtube-panel.cookiesFromBrowser": {
+          "type": "string",
+          "default": "",
+          "description": "Browser to take YouTube cookies from (chrome, firefox, safari, edge, brave...). Needed when YouTube answers with a bot check. Leave empty to run without cookies."
+        },
+        "youtube-panel.cookiesFile": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a Netscape-format cookie file, used instead of reading cookies from a browser."
+        }
+      }
+    },
     "viewsContainers": {
       "panel": [
         {

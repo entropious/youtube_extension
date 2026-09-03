@@ -1100,6 +1100,16 @@ function togglePlay() {
 	}
 }
 
+// The player lives in an iframe, so a keypress only reaches it while it holds
+// focus; the panel forwards the shortcut whenever focus is anywhere else.
+document.addEventListener('keydown', (e) => {
+	if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+	if (e.key === ' ' || e.key === 'Spacebar' || e.key === 'k') {
+		e.preventDefault();
+		togglePlay();
+	}
+});
+
 function pause() {
 	if (!isPaused && iframe && iframe.contentWindow) {
 		iframe.contentWindow.postMessage({
