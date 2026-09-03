@@ -204,6 +204,15 @@ export async function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand('youtube-panel.toggleClaudeSync', () => {
+			provider?.toggleClaudeSync();
+		})
+	);
+
+	context.subscriptions.push(
 		vscode.window.registerUriHandler(new YouTubeUriHandler(() => provider))
 	);
+
+	// The watcher on Claude's state file outlives the panel otherwise.
+	context.subscriptions.push({ dispose: () => provider?.dispose() });
 }

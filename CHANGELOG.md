@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.1
+
+### Added
+
+- **Claude Sync**: a switch in the top right ties playback to Claude Code —
+  video plays while Claude works and pauses the moment it waits for you. A
+  pause set by hand outranks it: Claude never restarts a video you stopped.
+  Also available as the `YouTube: Toggle Claude Sync` command.
+
+  Claude Code exposes no way to ask what it is doing, so switching this on
+  registers hooks in `~/.claude/settings.json` that write `busy` or `idle` into
+  `~/.claude/youtube-panel/state`, which the panel watches. Hooks you wrote
+  yourself are left alone, and switching it off removes only the ones the
+  extension added.
+
 ## 0.4.0
 
 Playback no longer goes through YouTube's embedded player. Streams are resolved

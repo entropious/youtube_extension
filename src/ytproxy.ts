@@ -653,12 +653,16 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	}
 
 	function togglePlay() {
-		if (video.paused) {
+		var playing = video.paused;
+		if (playing) {
 			var p = video.play();
 			if (p && p.catch) p.catch(function() {});
 		} else {
 			video.pause();
 		}
+		// Told apart from an automatic pause by the panel, which lets a choice
+		// made here outrank whatever Claude sync wants.
+		send({ type: 'userToggle', playing: playing });
 	}
 
 	// The bar stays up for a moment after the pointer stops, and never hides
