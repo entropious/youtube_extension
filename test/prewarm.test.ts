@@ -196,6 +196,33 @@ describe('Warming a start up', () => {
         expect(ffmpegs).to.be.empty;
     });
 
+    it('ends the stream still running for the previous video', async () => {
+        const first = fakeResponse();
+        await handleMedia(first, videoId, 0);
+        const previous = ffmpegs[0];
+
+        // Switching videos: the old stream would otherwise keep fetching ahead
+        // and compete for the same connection.
+        const second = fakeResponse();
+        await handleMedia(second, 'otherVideoX', 0);
+
+        expect(previous.kill.calledWith('SIGKILL')).to.equal(true);
+        expect(ffmpegs[1].killed).to.equal(false);
+    });
+
+    it('ends the previous stream even when the new one is warm', async () => {
+        const playing = fakeResponse();
+        await handleMedia(playing, videoId, 0);
+        const previous = ffmpegs[0];
+
+        prewarmStream('otherVideoX', 0);
+        await waitForFfmpeg(2);
+        const res = fakeResponse();
+        await handleMedia(res, 'otherVideoX', 0);
+
+        expect(previous.kill.calledWith('SIGKILL')).to.equal(true);
+    });
+
     describe('prefetchStream', () => {
         it('resolves without fetching any video', async () => {
             prefetchStream(videoId);
