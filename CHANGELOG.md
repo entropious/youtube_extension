@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2
 
 - Playback starts about twice as fast. The two slow steps — yt-dlp resolving the
   video and ffmpeg fetching the first HLS segments — now run while the player
@@ -11,6 +11,9 @@
   are kept here and handed to ffmpeg starting at the segment being seeked to, so
   a seek neither fetches the opening segments it would throw away nor waits on a
   round trip to YouTube for the playlist.
+- Switching videos no longer leaves the previous stream fetching in the
+  background, where it competed for the connection and made the new video take
+  seconds longer to start.
 
 ## 0.4.1
 

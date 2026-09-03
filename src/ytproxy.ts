@@ -313,6 +313,15 @@ const WARM_TTL_MS = 60 * 1000;
 
 let warmStream: WarmStream | null = null;
 
+/** The stream currently being served, kept so a new one can end it. */
+let activeStream: ReturnType<typeof runTool> | null = null;
+
+function stopActiveStream() {
+	if (!activeStream) return;
+	activeStream.kill('SIGKILL');
+	activeStream = null;
+}
+
 function dropWarmStream() {
 	const warm = warmStream;
 	if (!warm) return;
@@ -552,6 +561,12 @@ function headerArgs(headers: Record<string, string>): string[] {
 export async function handleMedia(res: http.ServerResponse, videoId: string, startAt = 0): Promise<void> {
 	if (!videoId) { res.writeHead(400); res.end('Missing video id'); return; }
 
+	// Only one video is ever watched at a time, and a stream left running from
+	// the previous one keeps fetching ahead — competing for the same connection
+	// and making the new start crawl. Closing the response usually stops it, but
+	// not always in time, so it is stopped here for certain.
+	stopActiveStream();
+
 	const warm = await takeWarmStream(videoId, startAt);
 	let ff: ReturnType<typeof runTool>;
 
@@ -583,11 +598,16 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 		ff.stdout.resume();
 	}
 
+	activeStream = ff;
+
 	ff.stdout.pipe(res);
 	ff.on('error', () => res.end());
 	// A signed URL that has expired makes ffmpeg fail immediately; the next
 	// request then resolves the video again instead of replaying the dead link.
-	ff.on('close', code => { if (code !== 0) invalidateStream(videoId); });
+	ff.on('close', code => {
+		if (activeStream === ff) activeStream = null;
+		if (code !== 0) invalidateStream(videoId);
+	});
 	res.on('close', () => ff.kill('SIGKILL'));
 }
 
