@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import { YouTubeViewProvider } from './provider';
-import { checkTools, handleInfo, handleMedia, handlePlayerPage, handleTools, setToolConfig } from './ytproxy';
+import { checkTools, handleInfo, handleMedia, handlePlayerPage, handlePlaylist, handleTools, setServerPort, setToolConfig } from './ytproxy';
 
 let proxyServer: http.Server | null = null;
 let proxyPort = 0;
@@ -26,6 +26,18 @@ async function startProxyServer(): Promise<void> {
 
 		if (url.pathname === '/tools') {
 			void handleTools(res, url.searchParams.get('refresh') === '1');
+			return;
+		}
+
+		// Read by ffmpeg, not by the page: a playlist that starts where playback
+		// does, so a seek fetches nothing before it.
+		if (url.pathname === '/playlist') {
+			void handlePlaylist(
+				res,
+				url.searchParams.get('v') ?? '',
+				parseInt(url.searchParams.get('i') ?? '0', 10),
+				parseInt(url.searchParams.get('from') ?? '0', 10)
+			);
 			return;
 		}
 
@@ -66,6 +78,8 @@ async function startProxyServer(): Promise<void> {
 			}
 
 			proxyPort = addr.port;
+			// ffmpeg reads its playlists back from this server.
+			setServerPort(proxyPort);
 			resolve();
 		});
 	});

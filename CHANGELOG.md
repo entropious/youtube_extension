@@ -7,6 +7,10 @@
   page is still loading, instead of one after the other once it asks. What
   ffmpeg produces meanwhile is held and handed over when the page arrives. The
   next video in a playlist is resolved while the current one plays.
+- Seeking is quicker and no longer stalls for eight seconds at a time. Playlists
+  are kept here and handed to ffmpeg starting at the segment being seeked to, so
+  a seek neither fetches the opening segments it would throw away nor waits on a
+  round trip to YouTube for the playlist.
 
 ## 0.4.1
 
