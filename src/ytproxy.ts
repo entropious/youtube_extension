@@ -170,6 +170,48 @@ export async function checkTools(refresh = false): Promise<ToolReport> {
 	return toolReport;
 }
 
+/**
+ * The format expression handed to yt-dlp, best choice first.
+ *
+ * HLS leads by a wide margin: its segments are read by plain GETs, so ffmpeg
+ * can both stream and seek them. The direct googlevideo links of the
+ * progressive and adaptive formats answer 403 to the open byte range ffmpeg
+ * asks for, and accept only small closed ranges — usable by yt-dlp itself, but
+ * not by ffmpeg, which is why they sit at the end as a last resort. Within HLS
+ * a combined rendition wins over a video+audio pair: one playlist resolves
+ * several times faster.
+ */
+export function formatSelector(maxHeight: number): string {
+	return [
+		`b[protocol^=m3u8][vcodec^=avc1][acodec!=none][height<=${maxHeight}]`,
+		`bv*[protocol^=m3u8][vcodec^=avc1][height<=${maxHeight}]+ba[protocol^=m3u8]`,
+		'b[protocol=https][vcodec^=avc1][acodec!=none]',
+		`bv*[vcodec^=avc1][height<=${maxHeight}]+ba[ext=m4a]`,
+		'b'
+	].join('/');
+}
+
+/** Reads yt-dlp's JSON dump into the parts the media server needs. */
+export function parseStreamInfo(data: any): StreamInfo {
+	// A pair selection reports both halves in requested_formats, video first; a
+	// combined format describes itself at the top level.
+	const picked: { url?: string; http_headers?: Record<string, string> }[] =
+		Array.isArray(data?.requested_formats) ? data.requested_formats : [data];
+	const parts = picked
+		.filter(f => typeof f?.url === 'string')
+		.map(f => ({ url: f.url as string, headers: f.http_headers ?? {} }));
+
+	if (!parts.length) {
+		throw new Error('yt-dlp returned no playable format');
+	}
+
+	return {
+		parts,
+		duration: typeof data.duration === 'number' ? data.duration : 0,
+		title: typeof data.title === 'string' ? data.title : ''
+	};
+}
+
 function runYtDlp(videoId: string): Promise<StreamInfo> {
 	// HLS first, and by a wide margin: its segments are read by plain GETs, so
 	// ffmpeg can both stream and seek them. The direct googlevideo links of the
@@ -178,20 +220,11 @@ function runYtDlp(videoId: string): Promise<StreamInfo> {
 	// but not by ffmpeg, which is why they sit at the end as a last resort.
 	// Within HLS a combined rendition wins over a video+audio pair: one playlist
 	// resolves several times faster.
-	const height = tools.maxHeight;
-	const format = [
-		`b[protocol^=m3u8][vcodec^=avc1][acodec!=none][height<=${height}]`,
-		`bv*[protocol^=m3u8][vcodec^=avc1][height<=${height}]+ba[protocol^=m3u8]`,
-		'b[protocol=https][vcodec^=avc1][acodec!=none]',
-		`bv*[vcodec^=avc1][height<=${height}]+ba[ext=m4a]`,
-		'b'
-	].join('/');
-
 	const args = [
 		'--no-playlist',
 		'--no-warnings',
 		'--no-progress',
-		'-f', format,
+		'-f', formatSelector(tools.maxHeight),
 		'-J',
 		`https://www.youtube.com/watch?v=${videoId}`
 	];
@@ -216,24 +249,7 @@ function runYtDlp(videoId: string): Promise<StreamInfo> {
 			}
 
 			try {
-				const data = JSON.parse(Buffer.concat(out).toString('utf8'));
-				// A pair selection reports both halves in requested_formats, video
-				// first; a combined format describes itself at the top level.
-				const picked: { url?: string; http_headers?: Record<string, string> }[] =
-					Array.isArray(data.requested_formats) ? data.requested_formats : [data];
-				const parts = picked
-					.filter(f => typeof f?.url === 'string')
-					.map(f => ({ url: f.url as string, headers: f.http_headers ?? {} }));
-				if (!parts.length) {
-					reject(new Error('yt-dlp returned no playable format'));
-					return;
-				}
-
-				resolve({
-					parts,
-					duration: typeof data.duration === 'number' ? data.duration : 0,
-					title: typeof data.title === 'string' ? data.title : ''
-				});
+				resolve(parseStreamInfo(JSON.parse(Buffer.concat(out).toString('utf8'))));
 			} catch (e) {
 				reject(e instanceof Error ? e : new Error(String(e)));
 			}
@@ -298,25 +314,7 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 		return;
 	}
 
-	const args = ['-loglevel', 'error'];
-	// Every input is opened at the offset, so a video+audio pair stays in sync.
-	for (const part of stream.parts) {
-		args.push(...headerArgs(part.headers));
-		if (startAt > 0) args.push('-ss', String(startAt));
-		args.push('-i', part.url);
-	}
-
-	const audioInput = stream.parts.length > 1 ? '1:a:0' : '0:a:0?';
-	args.push(
-		'-map', '0:v:0',
-		'-map', audioInput,
-		'-c:v', 'copy',
-		'-c:a', 'libmp3lame', '-b:a', '128k',
-		'-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-		'-f', 'mp4', 'pipe:1'
-	);
-
-	const ff = runTool(tools.ffmpegPath, args);
+	const ff = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt));
 
 	res.writeHead(200, {
 		'Content-Type': 'video/mp4',
@@ -332,8 +330,38 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 	res.on('close', () => ff.kill('SIGKILL'));
 }
 
+/**
+ * The ffmpeg command that turns a resolved stream into what the webview plays:
+ * H.264 copied through, audio re-encoded to MP3, wrapped in fragmented MP4.
+ *
+ * Both inputs of a video+audio pair are opened at the same offset, which is
+ * what keeps them in sync when playback starts anywhere but the beginning.
+ */
+export function ffmpegArgs(stream: StreamInfo, startAt = 0): string[] {
+	const args = ['-loglevel', 'error'];
+
+	for (const part of stream.parts) {
+		args.push(...headerArgs(part.headers));
+		if (startAt > 0) args.push('-ss', String(startAt));
+		args.push('-i', part.url);
+	}
+
+	// A combined format carries its audio in the same input; a pair keeps it in
+	// the second one.
+	const audioInput = stream.parts.length > 1 ? '1:a:0' : '0:a:0?';
+
+	return args.concat([
+		'-map', '0:v:0',
+		'-map', audioInput,
+		'-c:v', 'copy',
+		'-c:a', 'libmp3lame', '-b:a', '128k',
+		'-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+		'-f', 'mp4', 'pipe:1'
+	]);
+}
+
 /** Turns a yt-dlp failure into something the player page can act on. */
-function explain(message: string): string {
+export function explain(message: string): string {
 	// YouTube refuses a share of its catalogue to anonymous sessions, and which
 	// share that is moves with its bot checks; a current yt-dlp usually gets in.
 	if (/not a bot|sign in to confirm/i.test(message)) {
