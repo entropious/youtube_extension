@@ -16,6 +16,7 @@
  */
 
 import * as http from 'http';
+import * as https from 'https';
 import { spawn } from 'child_process';
 
 export type ToolConfig = {
@@ -44,6 +45,14 @@ export type StreamPart = {
 	url: string;
 	/** Headers yt-dlp expects the format to be fetched with. */
 	headers: Record<string, string>;
+	/** HLS parts are playlists, and can be handed to ffmpeg trimmed. */
+	isHls: boolean;
+};
+
+/** An HLS playlist split into what has to be kept and what can be cut. */
+export type Playlist = {
+	header: string[];
+	segments: { url: string; duration: number }[];
 };
 
 export type StreamInfo = {
@@ -202,7 +211,11 @@ export function parseStreamInfo(data: any): StreamInfo {
 		Array.isArray(data?.requested_formats) ? data.requested_formats : [data];
 	const parts = picked
 		.filter(f => typeof f?.url === 'string')
-		.map(f => ({ url: f.url as string, headers: f.http_headers ?? {} }));
+		.map(f => ({
+			url: f.url as string,
+			headers: f.http_headers ?? {},
+			isHls: String((f as { protocol?: string }).protocol ?? '').startsWith('m3u8')
+		}));
 
 	if (!parts.length) {
 		throw new Error('yt-dlp returned no playable format');
@@ -330,8 +343,9 @@ export function prewarmStream(videoId: string, startAt = 0): void {
 		buffered: [],
 		size: 0,
 		startedAt: Date.now(),
-		ready: resolveStream(videoId).then(stream => {
-			const proc = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt));
+		ready: resolveStream(videoId).then(async stream => {
+			const trimmed = await trimmedInputs(videoId, stream, startAt);
+			const proc = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt, trimmed ?? undefined));
 			warm.proc = proc;
 
 			proc.stdout.on('data', (chunk: Buffer) => {
@@ -372,6 +386,130 @@ async function takeWarmStream(videoId: string, startAt: number): Promise<WarmStr
 		// The warm-up failed; the request resolves the video on its own and
 		// reports what went wrong.
 		return null;
+	}
+}
+
+const playlistCache = new Map<string, { playlists: Playlist[]; expires: number }>();
+const playlistPending = new Map<string, Promise<Playlist[]>>();
+
+/** The port the media server listens on, needed to hand ffmpeg its playlists. */
+let serverPort = 0;
+
+export function setServerPort(port: number): void {
+	serverPort = port;
+}
+
+function download(url: string, headers: Record<string, string>): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const request = https.get(url, { headers }, response => {
+			if ((response.statusCode ?? 0) >= 400) {
+				response.resume();
+				reject(new Error(`playlist request failed with ${response.statusCode}`));
+				return;
+			}
+
+			const chunks: Buffer[] = [];
+			response.on('data', chunk => chunks.push(chunk));
+			response.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+			response.on('error', reject);
+		});
+
+		request.on('error', reject);
+	});
+}
+
+/** Splits a playlist into its header and the segments a seek can skip. */
+export function parsePlaylist(text: string): Playlist {
+	const header: string[] = [];
+	const segments: { url: string; duration: number }[] = [];
+	let duration = 0;
+	let seenSegment = false;
+
+	for (const raw of text.split('\n')) {
+		const line = raw.trim();
+		if (!line) continue;
+
+		if (line.startsWith('#EXTINF')) {
+			duration = parseFloat(line.slice('#EXTINF:'.length)) || 0;
+			continue;
+		}
+		if (line.startsWith('#')) {
+			// Tags after the first segment describe segments, not the playlist.
+			if (!seenSegment && line !== '#EXT-X-ENDLIST') header.push(line);
+			continue;
+		}
+
+		seenSegment = true;
+		segments.push({ url: line, duration });
+	}
+
+	return { header, segments };
+}
+
+/** Rebuilds a playlist from `fromIndex` onwards, which is all a seek needs. */
+export function renderPlaylist(playlist: Playlist, fromIndex: number): string {
+	const lines = [...playlist.header];
+	for (const segment of playlist.segments.slice(Math.max(0, fromIndex))) {
+		lines.push(`#EXTINF:${segment.duration.toFixed(6)},`, segment.url);
+	}
+	lines.push('#EXT-X-ENDLIST');
+	return lines.join('\n') + '\n';
+}
+
+/** Index of the segment covering `seconds`, and where that segment begins. */
+export function segmentAt(playlist: Playlist, seconds: number): { index: number; startsAt: number } {
+	let startsAt = 0;
+	for (let i = 0; i < playlist.segments.length; i++) {
+		const end = startsAt + playlist.segments[i].duration;
+		if (end > seconds) return { index: i, startsAt };
+		startsAt = end;
+	}
+	return { index: Math.max(0, playlist.segments.length - 1), startsAt };
+}
+
+/**
+ * Fetches and keeps the HLS playlists of a stream.
+ *
+ * Worth caching twice over: the playlists come from manifest.googlevideo, which
+ * takes a second or more to answer, and having them here is what lets a seek
+ * start at its own segment instead of making ffmpeg walk from the beginning.
+ */
+export async function ensurePlaylists(videoId: string, stream: StreamInfo): Promise<Playlist[] | null> {
+	if (!stream.parts.every(part => part.isHls)) return null;
+
+	const cached = playlistCache.get(videoId);
+	if (cached && cached.expires > Date.now()) return cached.playlists;
+
+	const inFlight = playlistPending.get(videoId);
+	if (inFlight) return inFlight;
+
+	const fetching = Promise.all(stream.parts.map(part => download(part.url, part.headers).then(parsePlaylist)))
+		.then(playlists => {
+			playlistCache.set(videoId, { playlists, expires: Date.now() + CACHE_TTL_MS });
+			return playlists;
+		})
+		.finally(() => playlistPending.delete(videoId));
+
+	playlistPending.set(videoId, fetching);
+	return fetching;
+}
+
+/** Serves a trimmed playlist to ffmpeg, from this server rather than YouTube. */
+export async function handlePlaylist(res: http.ServerResponse, videoId: string, part: number, from: number): Promise<void> {
+	try {
+		const stream = await resolveStream(videoId);
+		const playlists = await ensurePlaylists(videoId, stream);
+		const playlist = playlists?.[part];
+		if (!playlist) { res.writeHead(404); res.end('No playlist'); return; }
+
+		res.writeHead(200, {
+			'Content-Type': 'application/vnd.apple.mpegurl',
+			'Cache-Control': 'no-cache'
+		});
+		res.end(renderPlaylist(playlist, from));
+	} catch (e) {
+		res.writeHead(502);
+		res.end(e instanceof Error ? e.message : String(e));
 	}
 }
 
@@ -429,7 +567,8 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 			return;
 		}
 
-		ff = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt));
+		const trimmed = await trimmedInputs(videoId, stream, startAt);
+		ff = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt, trimmed ?? undefined));
 	}
 
 	res.writeHead(200, {
@@ -452,6 +591,37 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 	res.on('close', () => ff.kill('SIGKILL'));
 }
 
+/** Playlists served from here, already cut to where playback begins. */
+export type TrimmedInputs = { urls: string[]; offset: number };
+
+/**
+ * Points ffmpeg at trimmed playlists instead of YouTube's own.
+ *
+ * Handed the original playlist with `-ss`, ffmpeg first fetches the opening
+ * segments to probe the stream and only then jumps — so every seek pays for
+ * megabytes it throws away, plus a slow round trip to manifest.googlevideo.
+ * Starting the playlist at the seek point removes both.
+ */
+async function trimmedInputs(videoId: string, stream: StreamInfo, startAt: number): Promise<TrimmedInputs | null> {
+	if (!serverPort) return null;
+
+	let playlists: Playlist[] | null;
+	try {
+		playlists = await ensurePlaylists(videoId, stream);
+	} catch {
+		// Falling back to YouTube's playlist is slower, but it still plays.
+		return null;
+	}
+	if (!playlists || playlists.length !== stream.parts.length) return null;
+
+	// Every part is cut at the same moment, so the tracks stay aligned.
+	const cut = segmentAt(playlists[0], startAt);
+	const urls = playlists.map((_, index) =>
+		`http://127.0.0.1:${serverPort}/playlist?v=${encodeURIComponent(videoId)}&i=${index}&from=${cut.index}`);
+
+	return { urls, offset: Math.max(0, startAt - cut.startsAt) };
+}
+
 /**
  * The ffmpeg command that turns a resolved stream into what the webview plays:
  * H.264 copied through, audio re-encoded to MP3, wrapped in fragmented MP4.
@@ -459,14 +629,17 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
  * Both inputs of a video+audio pair are opened at the same offset, which is
  * what keeps them in sync when playback starts anywhere but the beginning.
  */
-export function ffmpegArgs(stream: StreamInfo, startAt = 0): string[] {
+export function ffmpegArgs(stream: StreamInfo, startAt = 0, trimmed?: TrimmedInputs): string[] {
 	const args = ['-loglevel', 'error'];
 
-	for (const part of stream.parts) {
+	stream.parts.forEach((part, index) => {
 		args.push(...headerArgs(part.headers));
-		if (startAt > 0) args.push('-ss', String(startAt));
-		args.push('-i', part.url);
-	}
+		// With a trimmed playlist the input already begins near the seek point,
+		// so only the remainder inside its first segment is left to skip.
+		const offset = trimmed ? trimmed.offset : startAt;
+		if (offset > 0) args.push('-ss', String(offset));
+		args.push('-i', trimmed ? trimmed.urls[index] : part.url);
+	});
 
 	// A combined format carries its audio in the same input; a pair keeps it in
 	// the second one.
