@@ -21,28 +21,13 @@ body {
 	font-family: var(--vscode-font-family), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
-.top-hitbox, .bottom-hitbox {
+.top-hitbox {
 	position: absolute;
 	left: 0;
+	top: 0;
 	height: 60px;
 	z-index: 999;
-}
-
-.top-hitbox {
-	top: 0;
 	width: min(100%, 600px, max(400px, calc(100% - 170px)));
-}
-
-.top-hitbox {
-	top: 0;
-}
-
-/* Kept narrow on purpose: the player's own control bar sits at the bottom of
-   the frame, and a tall hitbox would swallow clicks meant for its seek slider. */
-.bottom-hitbox {
-	bottom: 0;
-	width: 100%;
-	height: 14px;
 }
 
 .header {
@@ -620,7 +605,8 @@ iframe {
 /* Chapters Module */
 .chapters-module {
 	position: absolute;
-	bottom: 0;
+	/* Height of the player's own control bar, reported by the player frame. */
+	bottom: var(--player-bar-height, 0px);
 	left: 0;
 	width: 100%;
 	padding: 12px 16px;
@@ -629,7 +615,7 @@ iframe {
 	border-top: 1px solid rgba(255, 255, 255, 0.1);
 	z-index: 1000;
 	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-	transform: translateY(100%);
+	transform: translateY(calc(100% + var(--player-bar-height, 0px)));
 	opacity: 0;
 	box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.9);
 	display: none;
@@ -640,14 +626,14 @@ body.has-chapters .chapters-module {
     display: block;
 }
 
-/* Chapters wait before sliding in, so passing the pointer over the player's
-   control bar on the way down does not cover it. Hiding stays immediate. */
-.bottom-hitbox:hover + .chapters-module,
+/* Opened from script.js once the player reports the pointer resting near the
+   bottom edge; the delay lives there, so passing over the player's control bar
+   on the way down does not cover it. */
+body.chapters-open .chapters-module,
 .chapters-module:hover {
     transform: translateY(0);
     opacity: 1;
     pointer-events: auto;
-    transition-delay: 0.6s;
 }
 
 .chapters-list {

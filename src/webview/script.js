@@ -55,7 +55,6 @@ const statusText = document.getElementById('status-text');
 const header = document.querySelector('.header');
 const chaptersModule = document.getElementById('chapters-module');
 const chaptersList = document.getElementById('chapters-list');
-const bottomHitbox = document.querySelector('.bottom-hitbox');
 
 let favorites = [];
 let currentChapters = [];
@@ -119,12 +118,31 @@ chaptersModule.addEventListener('mouseenter', () => {
     if (active) centerChapter(active);
 });
 
-if (bottomHitbox) {
-    bottomHitbox.addEventListener('mouseenter', () => {
-        const active = chaptersList.querySelector('.chapter-item.active');
-        if (active) centerChapter(active);
-    });
+// The chapter strip slides in when the pointer lingers near the bottom of the
+// player; the player frame reports that, since its own pointer events never
+// reach this document. The strip sits above the player's control bar — which
+// keeps the bottom edge — so it never covers the seek slider.
+let chaptersTimer = 0;
+
+function setChaptersOpen(open) {
+	if (open && !document.body.classList.contains('has-chapters')) return;
+	document.body.classList.toggle('chapters-open', open);
+	if (open) {
+		const active = chaptersList.querySelector('.chapter-item.active');
+		if (active) centerChapter(active);
+	}
 }
+
+// The strip is opened and closed by one thing only — the zone the player
+// reports. Closing it on the strip's own mouseleave would hand the pointer back
+// to the bottom zone, which would ask for it again: the two would ping-pong.
+function scheduleChapters(open) {
+	clearTimeout(chaptersTimer);
+	setChaptersOpen(open);
+}
+
+// The player cannot see a pointer that leaves the panel altogether.
+document.addEventListener('mouseleave', () => scheduleChapters(false));
 
 
 
@@ -431,6 +449,16 @@ window.addEventListener('message', event => {
 	let data = message;
 	if (typeof data === 'string') {
 		try { data = JSON.parse(data); } catch(e) { return; }
+	}
+
+	if (data && data.type === 'pointerZone') {
+		scheduleChapters(Boolean(data.bottom));
+	}
+
+	if (data && data.type === 'barHeight') {
+		// The strip rests on top of the player's control bar, and hides by
+		// sliding past both its own height and that bar.
+		document.body.style.setProperty('--player-bar-height', (Number(data.height) || 0) + 'px');
 	}
 
 	if (data && data.type === 'proxyLog') {
