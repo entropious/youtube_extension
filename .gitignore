@@ -6,3 +6,6 @@ out/
 .env
 test/*.js
 test/*.js.map
+.probe
+.playwright-mcp
+.claude

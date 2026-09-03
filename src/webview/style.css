@@ -33,17 +33,16 @@ body {
 	width: min(100%, 600px, max(400px, calc(100% - 170px)));
 }
 
-.bottom-hitbox {
-	bottom: 0;
-	width: 100%;
-}
-
 .top-hitbox {
 	top: 0;
 }
 
+/* Kept narrow on purpose: the player's own control bar sits at the bottom of
+   the frame, and a tall hitbox would swallow clicks meant for its seek slider. */
 .bottom-hitbox {
 	bottom: 0;
+	width: 100%;
+	height: 14px;
 }
 
 .header {
@@ -641,11 +640,14 @@ body.has-chapters .chapters-module {
     display: block;
 }
 
+/* Chapters wait before sliding in, so passing the pointer over the player's
+   control bar on the way down does not cover it. Hiding stays immediate. */
 .bottom-hitbox:hover + .chapters-module,
 .chapters-module:hover {
     transform: translateY(0);
     opacity: 1;
     pointer-events: auto;
+    transition-delay: 0.6s;
 }
 
 .chapters-list {
