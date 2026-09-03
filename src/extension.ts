@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import { YouTubeViewProvider } from './provider';
-import { handleInfo, handleMedia, handlePlayerPage, setToolConfig } from './ytproxy';
+import { checkTools, handleInfo, handleMedia, handlePlayerPage, handleTools, setToolConfig } from './ytproxy';
 
 let proxyServer: http.Server | null = null;
 let proxyPort = 0;
@@ -12,9 +12,7 @@ function applyToolConfig(): void {
 	setToolConfig({
 		ytDlpPath: config.get<string>('ytDlpPath') || 'yt-dlp',
 		ffmpegPath: config.get<string>('ffmpegPath') || 'ffmpeg',
-		maxHeight: config.get<number>('maxHeight') || 1080,
-		cookiesFromBrowser: config.get<string>('cookiesFromBrowser') || '',
-		cookiesFile: config.get<string>('cookiesFile') || ''
+		maxHeight: config.get<number>('maxHeight') || 1080
 	});
 }
 
@@ -25,6 +23,11 @@ async function startProxyServer(): Promise<void> {
 
 	proxyServer = http.createServer((req, res) => {
 		const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+
+		if (url.pathname === '/tools') {
+			void handleTools(res, url.searchParams.get('refresh') === '1');
+			return;
+		}
 
 		if (url.pathname !== '/embed' && url.pathname !== '/info' && url.pathname !== '/media') {
 			res.writeHead(404);
@@ -132,6 +135,10 @@ export async function activate(context: vscode.ExtensionContext) {
 			if (e.affectsConfiguration('youtube-panel')) applyToolConfig();
 		})
 	);
+
+	// Probed at startup so the panel has the answer before its first video; the
+	// panel itself blocks on the result.
+	void checkTools();
 
 	context.subscriptions.push(
 		vscode.window.registerWebviewPanelSerializer('youtube-player', {

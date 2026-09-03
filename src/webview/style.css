@@ -724,3 +724,140 @@ body.chapters-open .chapters-module,
     font-weight: 700;
     opacity: 1;
 }
+
+/* Setup gate — shown instead of the whole panel while the tools are missing */
+.setup-gate {
+	position: absolute;
+	inset: 0;
+	z-index: 2000;
+	background: var(--vscode-editor-background, #111);
+	color: var(--vscode-foreground, #e6e6e6);
+	overflow-y: auto;
+	padding: 28px 24px;
+	box-sizing: border-box;
+}
+
+.setup-gate[hidden] {
+	display: none;
+}
+
+.setup-inner {
+	max-width: 620px;
+	margin: 0 auto;
+}
+
+.setup-gate h1 {
+	font-size: 17px;
+	margin: 0 0 6px;
+}
+
+.setup-lead {
+	opacity: 0.75;
+	margin: 0 0 18px;
+	line-height: 1.55;
+}
+
+.setup-tools {
+	list-style: none;
+	padding: 0;
+	margin: 0 0 22px;
+}
+
+.setup-tools li {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 0;
+}
+
+.setup-tools .mark {
+	width: 14px;
+	text-align: center;
+}
+
+.setup-tools .ok .mark {
+	color: #4ec26a;
+}
+
+.setup-tools .missing .mark {
+	color: var(--accent-color, #f26d6d);
+}
+
+.setup-tools .note {
+	opacity: 0.6;
+}
+
+.setup-recipe {
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 8px;
+	padding: 12px 14px;
+	margin-bottom: 12px;
+	background: rgba(255, 255, 255, 0.03);
+}
+
+.setup-recipe-head {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	margin-bottom: 8px;
+	flex-wrap: wrap;
+}
+
+.setup-manager {
+	font-weight: 600;
+}
+
+.setup-hint {
+	opacity: 0.6;
+	font-size: 12px;
+}
+
+.setup-cmd {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	background: rgba(0, 0, 0, 0.35);
+	border-radius: 6px;
+	padding: 9px 10px;
+}
+
+.setup-cmd code {
+	flex: 1;
+	overflow-x: auto;
+	white-space: pre;
+	user-select: all;
+	font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+	font-size: 12.5px;
+}
+
+.setup-btn {
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	background: rgba(255, 255, 255, 0.08);
+	color: inherit;
+	border-radius: 6px;
+	padding: 5px 12px;
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.setup-btn:hover {
+	background: rgba(255, 255, 255, 0.14);
+}
+
+.setup-foot {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-top: 20px;
+}
+
+.setup-status {
+	opacity: 0.6;
+}
+
+.setup-tip {
+	opacity: 0.6;
+	margin-top: 18px;
+	line-height: 1.55;
+}

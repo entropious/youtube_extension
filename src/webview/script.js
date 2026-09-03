@@ -55,6 +55,7 @@ const statusText = document.getElementById('status-text');
 const header = document.querySelector('.header');
 const chaptersModule = document.getElementById('chapters-module');
 const chaptersList = document.getElementById('chapters-list');
+const setupGate = document.getElementById('setup-gate');
 
 let favorites = [];
 let currentChapters = [];
@@ -225,6 +226,105 @@ if (effectiveUrl && effectiveUrl !== 'about:blank') {
 }
 
 
+
+// --- Setup gate -----------------------------------------------------------
+// Neither search nor playback means anything without yt-dlp and ffmpeg, so the
+// panel is covered by install instructions until both answer.
+
+function copyCommand(text, button) {
+	const finish = (ok) => {
+		button.textContent = ok ? 'Copied' : 'Select and copy';
+		setTimeout(() => { button.textContent = 'Copy'; }, 1600);
+	};
+
+	// The clipboard API is not always granted inside a webview, hence the
+	// hidden-selection fallback.
+	const fallback = () => {
+		const area = document.createElement('textarea');
+		area.value = text;
+		area.style.position = 'fixed';
+		area.style.opacity = '0';
+		document.body.appendChild(area);
+		area.select();
+		let ok = false;
+		try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+		document.body.removeChild(area);
+		finish(ok);
+	};
+
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(text).then(() => finish(true), fallback);
+	} else {
+		fallback();
+	}
+}
+
+function renderSetupGate(report) {
+	const missing = [];
+	if (!report.ytDlp.installed) missing.push('yt-dlp');
+	if (!report.ffmpeg.installed) missing.push('ffmpeg');
+
+	document.getElementById('setup-title').textContent =
+		missing.length > 1 ? `${missing.join(' and ')} are missing` : `${missing[0]} is missing`;
+
+	const tools = document.getElementById('setup-tools');
+	tools.innerHTML = '';
+	[report.ytDlp, report.ffmpeg].forEach(tool => {
+		const item = document.createElement('li');
+		item.className = tool.installed ? 'ok' : 'missing';
+		item.innerHTML = '<span class="mark"></span><code></code><span class="note"></span>';
+		item.querySelector('.mark').textContent = tool.installed ? '✓' : '✕';
+		item.querySelector('code').textContent = tool.command;
+		item.querySelector('.note').textContent = tool.installed ? (tool.version || 'found') : 'not found';
+		tools.appendChild(item);
+	});
+
+	const recipes = document.getElementById('setup-recipes');
+	recipes.innerHTML = '';
+	(report.recipes || []).forEach(recipe => {
+		const block = document.createElement('div');
+		block.className = 'setup-recipe';
+		block.innerHTML =
+			'<div class="setup-recipe-head"><span class="setup-manager"></span><span class="setup-hint"></span></div>' +
+			'<div class="setup-cmd"><code></code><button class="setup-btn">Copy</button></div>';
+		block.querySelector('.setup-manager').textContent = recipe.manager;
+		block.querySelector('.setup-hint').textContent = recipe.hint || '';
+		block.querySelector('code').textContent = recipe.command;
+		block.querySelector('button').addEventListener('click', (e) => copyCommand(recipe.command, e.currentTarget));
+		recipes.appendChild(block);
+	});
+}
+
+function checkTools(refresh) {
+	// Without a port there is no server to ask, and no fetch means this is not a
+	// real webview; either way the gate stays down rather than blocking the UI.
+	if (!currentProxyPort || typeof fetch !== 'function') return Promise.resolve(true);
+
+	const status = document.getElementById('setup-status');
+	if (refresh) status.textContent = 'Checking…';
+
+	return fetch(`http://127.0.0.1:${currentProxyPort}/tools${refresh ? '?refresh=1' : ''}`)
+		.then(r => r.json())
+		.then(report => {
+			if (report.ready) {
+				setupGate.hidden = true;
+				// The player frame was left blank while the gate was up.
+				if (refresh && lastLoadedUrl && lastLoadedUrl !== 'about:blank') iframe.src = lastLoadedUrl;
+				return true;
+			}
+			renderSetupGate(report);
+			setupGate.hidden = false;
+			status.textContent = refresh ? 'Still missing.' : '';
+			return false;
+		})
+		.catch(err => {
+			log('Tool check failed:', err);
+			return true;
+		});
+}
+
+document.getElementById('setup-recheck').addEventListener('click', () => checkTools(true));
+checkTools(false);
 
 vscode.postMessage({ type: 'webviewReady' });
 vscode.postMessage({ type: 'requestFavorites' });
