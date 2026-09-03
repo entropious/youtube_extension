@@ -492,10 +492,43 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		}, 2500);
 	}
 
-	stage.addEventListener('pointermove', revealBar);
+	// The control bar owns the bottom edge of the frame; the panel stacks its
+	// chapter strip directly above it, so it is told how tall the bar is.
+	function reportBarHeight() {
+		send({ type: 'barHeight', height: bar.offsetHeight });
+	}
+
+	window.addEventListener('resize', reportBarHeight);
+
+	// Pointer events inside this frame are invisible to the panel around it, so
+	// the panel is told when the pointer reaches the bottom edge — that is what
+	// its chapter strip slides in on.
+	var atBottom = false;
+	function reportPointerZone(bottom) {
+		if (bottom === atBottom) return;
+		atBottom = bottom;
+		send({ type: 'pointerZone', bottom: bottom });
+	}
+
+	// Deep enough that the strip is easy to summon and that the strip's own
+	// height stays inside it — a pointer resting on the strip still counts as
+	// "at the bottom" instead of flipping the zone back and forth.
+	function bottomZone() {
+		return Math.max(120, Math.min(220, window.innerHeight * 0.4));
+	}
+
+	stage.addEventListener('pointermove', function(e) {
+		revealBar();
+		reportPointerZone(e.clientY > window.innerHeight - bottomZone());
+	});
 	stage.addEventListener('pointerdown', revealBar);
 	stage.addEventListener('pointerleave', function() {
 		if (!video.paused && !seeking) bar.classList.remove('shown');
+		// Leaving through the bottom means the pointer moved onto the panel's
+		// chapter strip, which covers this frame's lower edge. Reporting that as
+		// "left the zone" would hide the strip and hand the pointer straight back
+		// — the two would then flip forever. The panel closes it on its own.
+		if (!atBottom) reportPointerZone(false);
 	});
 
 	playBtn.addEventListener('click', togglePlay);
@@ -595,6 +628,7 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		}
 	});
 
+	reportBarHeight();
 	load(videoId, ${Math.max(0, Math.floor(startTime))}, ${autoplay ? 'true' : 'false'});
 })();
 </script>
