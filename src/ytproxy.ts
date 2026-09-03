@@ -23,23 +23,18 @@ export type ToolConfig = {
 	ffmpegPath: string;
 	/** Upper bound for the picked format's height, in pixels. */
 	maxHeight: number;
-	/** Browser to take YouTube cookies from, as accepted by --cookies-from-browser. */
-	cookiesFromBrowser: string;
-	/** Path to a Netscape-format cookie file. */
-	cookiesFile: string;
 };
 
 let tools: ToolConfig = {
 	ytDlpPath: 'yt-dlp',
 	ffmpegPath: 'ffmpeg',
-	maxHeight: 1080,
-	cookiesFromBrowser: '',
-	cookiesFile: ''
+	maxHeight: 1080
 };
 
 export function setToolConfig(config: Partial<ToolConfig>): void {
 	tools = { ...tools, ...config };
 	streamCache.clear();
+	toolReport = null;
 }
 
 export type StreamPart = {
@@ -69,6 +64,112 @@ export class ToolMissingError extends Error {
 	}
 }
 
+export type ToolStatus = {
+	/** The configured command, so a wrong path in the settings is visible. */
+	command: string;
+	installed: boolean;
+	version?: string;
+};
+
+export type InstallRecipe = { manager: string; hint: string; command: string };
+
+export type ToolReport = {
+	ytDlp: ToolStatus;
+	ffmpeg: ToolStatus;
+	ready: boolean;
+	/** Ready-to-paste install commands for what is missing on this platform. */
+	recipes: InstallRecipe[];
+};
+
+let toolReport: ToolReport | null = null;
+
+/**
+ * How a tool is actually started.
+ *
+ * On Windows a tool installed by pip or npm is a `.cmd` wrapper, which
+ * CreateProcess — and therefore spawn — will not run. Such a wrapper is invoked
+ * through `cmd.exe /c` instead of `shell: true`, so arguments keep their own
+ * quoting: stream URLs are full of `&`, which a shell would tear apart.
+ */
+type Launcher = { file: string; prefix: string[] };
+
+const launchers = new Map<string, Launcher>();
+
+function launcherFor(command: string): Launcher {
+	return launchers.get(command) ?? { file: command, prefix: [] };
+}
+
+export function runTool(command: string, args: string[]) {
+	const launcher = launcherFor(command);
+	return spawn(launcher.file, [...launcher.prefix, ...args]);
+}
+
+/** Asks Windows where a command lives, so a wrapper can be run explicitly. */
+function whereIs(command: string): Promise<string | null> {
+	return new Promise(resolve => {
+		const proc = spawn('where', [command]);
+		const out: Buffer[] = [];
+		proc.stdout.on('data', c => out.push(c));
+		proc.on('error', () => resolve(null));
+		proc.on('close', code => {
+			if (code !== 0) { resolve(null); return; }
+			const first = Buffer.concat(out).toString('utf8').split(/\r?\n/)[0].trim();
+			resolve(first || null);
+		});
+	});
+}
+
+function spawnVersion(launcher: Launcher, versionArg: string): Promise<string | null> {
+	return new Promise(resolve => {
+		const proc = spawn(launcher.file, [...launcher.prefix, versionArg]);
+		const out: Buffer[] = [];
+
+		proc.stdout.on('data', c => out.push(c));
+		proc.on('error', () => resolve(null));
+		proc.on('close', code => {
+			if (code !== 0) { resolve(null); return; }
+			// ffmpeg prints a banner; yt-dlp prints the bare version.
+			const first = Buffer.concat(out).toString('utf8').split('\n')[0].trim();
+			resolve(first.replace(/^ffmpeg version /i, '').split(' ')[0] || 'found');
+		});
+	});
+}
+
+async function probeTool(command: string, versionArg: string): Promise<ToolStatus> {
+	launchers.delete(command);
+
+	const direct = await spawnVersion({ file: command, prefix: [] }, versionArg);
+	if (direct) return { command, installed: true, version: direct };
+
+	if (process.platform === 'win32') {
+		const found = await whereIs(command);
+		if (found && /\.(cmd|bat)$/i.test(found)) {
+			const launcher: Launcher = { file: 'cmd.exe', prefix: ['/c', found] };
+			const version = await spawnVersion(launcher, versionArg);
+			if (version) {
+				launchers.set(command, launcher);
+				return { command, installed: true, version };
+			}
+		}
+	}
+
+	return { command, installed: false };
+}
+
+/** Reports whether the tools playback depends on are actually present. */
+export async function checkTools(refresh = false): Promise<ToolReport> {
+	if (toolReport && !refresh) return toolReport;
+
+	const [ytDlp, ffmpeg] = await Promise.all([
+		probeTool(tools.ytDlpPath, '--version'),
+		probeTool(tools.ffmpegPath, '-version')
+	]);
+
+	const ready = ytDlp.installed && ffmpeg.installed;
+	toolReport = { ytDlp, ffmpeg, ready, recipes: ready ? [] : installRecipes(ytDlp, ffmpeg) };
+	return toolReport;
+}
+
 function runYtDlp(videoId: string): Promise<StreamInfo> {
 	// HLS first, and by a wide margin: its segments are read by plain GETs, so
 	// ffmpeg can both stream and seek them. The direct googlevideo links of the
@@ -91,16 +192,12 @@ function runYtDlp(videoId: string): Promise<StreamInfo> {
 		'--no-warnings',
 		'--no-progress',
 		'-f', format,
-		'-J'
+		'-J',
+		`https://www.youtube.com/watch?v=${videoId}`
 	];
-	// YouTube answers some requests with a bot check that only a signed-in
-	// session gets past.
-	if (tools.cookiesFromBrowser) args.push('--cookies-from-browser', tools.cookiesFromBrowser);
-	if (tools.cookiesFile) args.push('--cookies', tools.cookiesFile);
-	args.push(`https://www.youtube.com/watch?v=${videoId}`);
 
 	return new Promise((resolve, reject) => {
-		const proc = spawn(tools.ytDlpPath, args);
+		const proc = runTool(tools.ytDlpPath, args);
 		const out: Buffer[] = [];
 		const err: Buffer[] = [];
 
@@ -219,7 +316,7 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 		'-f', 'mp4', 'pipe:1'
 	);
 
-	const ff = spawn(tools.ffmpegPath, args);
+	const ff = runTool(tools.ffmpegPath, args);
 
 	res.writeHead(200, {
 		'Content-Type': 'video/mp4',
@@ -237,10 +334,10 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 
 /** Turns a yt-dlp failure into something the player page can act on. */
 function explain(message: string): string {
-	// YouTube serves a share of its catalogue to signed-in sessions only.
+	// YouTube refuses a share of its catalogue to anonymous sessions, and which
+	// share that is moves with its bot checks; a current yt-dlp usually gets in.
 	if (/not a bot|sign in to confirm/i.test(message)) {
-		return 'YouTube asks this video to be watched from a signed-in session. '
-			+ 'Set "youtube-panel.cookiesFromBrowser" (e.g. chrome or safari) to the browser you are signed in with.';
+		return 'YouTube refused this video to an anonymous session. Updating yt-dlp usually clears it.';
 	}
 
 	if (/is not available|private video|members-only|age/i.test(message)) {
@@ -288,6 +385,89 @@ export function handlePlayerPage(
 		'Access-Control-Allow-Origin': '*'
 	});
 	res.end(playerPageHtml(videoId, startTime, autoplay));
+}
+
+/** Reports tool availability; the panel blocks on this until both are present. */
+export async function handleTools(res: http.ServerResponse, refresh = false): Promise<void> {
+	const report = await checkTools(refresh);
+	res.writeHead(200, {
+		'Content-Type': 'application/json; charset=utf-8',
+		'Cache-Control': 'no-cache',
+		'Access-Control-Allow-Origin': '*'
+	});
+	res.end(JSON.stringify(report));
+}
+
+/** Install commands for the tools that are missing, for this platform. */
+export function installRecipes(ytDlpStatus: ToolStatus, ffmpegStatus: ToolStatus): InstallRecipe[] {
+	const missing = {
+		ytDlp: !ytDlpStatus.installed,
+		ffmpeg: !ffmpegStatus.installed
+	};
+	const pick = (ytDlp: string, ffmpeg: string, both: string) =>
+		missing.ytDlp && missing.ffmpeg ? both : missing.ytDlp ? ytDlp : ffmpeg;
+
+	if (process.platform === 'darwin') {
+		return [
+			{
+				manager: 'Homebrew',
+				hint: 'The usual choice on macOS.',
+				command: pick('brew install yt-dlp', 'brew install ffmpeg', 'brew install yt-dlp ffmpeg')
+			},
+			{
+				manager: 'MacPorts',
+				hint: 'If you use MacPorts instead.',
+				command: pick('sudo port install yt-dlp', 'sudo port install ffmpeg', 'sudo port install yt-dlp ffmpeg')
+			}
+		];
+	}
+
+	if (process.platform === 'win32') {
+		return [
+			{
+				manager: 'winget',
+				hint: 'Ships with Windows 10 and 11.',
+				command: pick(
+					'winget install yt-dlp.yt-dlp',
+					'winget install Gyan.FFmpeg',
+					'winget install yt-dlp.yt-dlp Gyan.FFmpeg'
+				)
+			},
+			{
+				manager: 'Scoop',
+				hint: 'No administrator rights needed.',
+				command: pick('scoop install yt-dlp', 'scoop install ffmpeg', 'scoop install yt-dlp ffmpeg')
+			},
+			{
+				manager: 'Chocolatey',
+				hint: 'Run from an elevated prompt.',
+				command: pick('choco install yt-dlp', 'choco install ffmpeg', 'choco install yt-dlp ffmpeg')
+			}
+		];
+	}
+
+	return [
+		{
+			manager: 'apt (Debian, Ubuntu)',
+			hint: 'Distribution packages of yt-dlp are often months behind; pipx below keeps it current.',
+			command: pick('sudo apt install yt-dlp', 'sudo apt install ffmpeg', 'sudo apt install yt-dlp ffmpeg')
+		},
+		{
+			manager: 'dnf (Fedora)',
+			hint: 'ffmpeg comes from RPM Fusion.',
+			command: pick('sudo dnf install yt-dlp', 'sudo dnf install ffmpeg', 'sudo dnf install yt-dlp ffmpeg')
+		},
+		{
+			manager: 'pacman (Arch)',
+			hint: '',
+			command: pick('sudo pacman -S yt-dlp', 'sudo pacman -S ffmpeg', 'sudo pacman -S yt-dlp ffmpeg')
+		},
+		...(missing.ytDlp ? [{
+			manager: 'pipx',
+			hint: 'Always the newest yt-dlp, which matters when YouTube changes.',
+			command: 'pipx install yt-dlp'
+		}] : [])
+	];
 }
 
 function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): string {

@@ -28,9 +28,18 @@ Experience YouTube like never before, right from your editor! Watch tutorials, l
 
 ## 📦 Requirements
 
-Playback goes through [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ffmpeg](https://ffmpeg.org), so both have to be installed and reachable — on macOS, `brew install yt-dlp ffmpeg`. If they live outside your `PATH`, point `youtube-panel.ytDlpPath` and `youtube-panel.ffmpegPath` at them.
+Playback goes through [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ffmpeg](https://ffmpeg.org), so both have to be installed and reachable:
 
-YouTube serves part of its catalogue to signed-in sessions only. When a video is refused with a bot check, set `youtube-panel.cookiesFromBrowser` to the browser you are signed in with (`chrome`, `firefox`, `safari`, `edge`, `brave`), or `youtube-panel.cookiesFile` to an exported cookie file.
+| | |
+| --- | --- |
+| macOS | `brew install yt-dlp ffmpeg` |
+| Windows | `winget install yt-dlp.yt-dlp Gyan.FFmpeg` |
+| Debian, Ubuntu | `sudo apt install yt-dlp ffmpeg` |
+| Arch | `sudo pacman -S yt-dlp ffmpeg` |
+
+Until both are found, the panel shows nothing but these commands for your own system, ready to copy, with a button to check again. If the tools live somewhere unusual, point `youtube-panel.ytDlpPath` and `youtube-panel.ffmpegPath` at them instead.
+
+YouTube tightens its bot checks from time to time and can refuse a video to an anonymous session. Updating yt-dlp usually clears it — its extractors change with YouTube.
 
 ## 🚀 Getting Started
 
@@ -63,8 +72,6 @@ The extension uses VS Code's global state to securely store your history and set
 | `youtube-panel.ytDlpPath` | Path to the yt-dlp executable. | `yt-dlp` |
 | `youtube-panel.ffmpegPath` | Path to the ffmpeg executable. | `ffmpeg` |
 | `youtube-panel.maxHeight` | Maximum video height, in pixels. | `1080` |
-| `youtube-panel.cookiesFromBrowser` | Browser to take YouTube cookies from. | empty |
-| `youtube-panel.cookiesFile` | Netscape-format cookie file to use instead. | empty |
 
 ## 📝 License
 

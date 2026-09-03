@@ -73,6 +73,22 @@
 		</div>
 	</div>
 
+	<!-- Covers the whole panel while yt-dlp or ffmpeg are missing: without them
+	     nothing here can play, so nothing else is worth showing. -->
+	<div id="setup-gate" class="setup-gate" hidden>
+		<div class="setup-inner">
+			<h1 id="setup-title">Setup needed</h1>
+			<p class="setup-lead">Videos are resolved with <b>yt-dlp</b> and served through <b>ffmpeg</b>. Install what is missing, then check again.</p>
+			<ul id="setup-tools" class="setup-tools"></ul>
+			<div id="setup-recipes"></div>
+			<div class="setup-foot">
+				<button id="setup-recheck" class="setup-btn">Check again</button>
+				<span id="setup-status" class="setup-status"></span>
+			</div>
+			<p class="setup-tip">Installed somewhere unusual? Set <code>youtube-panel.ytDlpPath</code> and <code>youtube-panel.ffmpegPath</code> in VS Code settings.</p>
+		</div>
+	</div>
+
 	<script>
 		%%SCRIPT%%
 	</script>
