@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.4
+
+- Playback recovers on its own when the stream breaks — after a long pause, or
+  when a link expires. Both the network and the decode failure are now retried
+  from the position playback stood at, up to three times in a row; only a video
+  that truly cannot play still reports an error.
+- The failure notice no longer stays on screen over a picture that plays again.
+- Clicking the picture pauses it again. The notice covers the whole frame and
+  was swallowing the click meant for the video.
+- Moving the view elsewhere in the workbench, or switching to a neighbouring
+  view, no longer reloads the player and starts the video over — which is what
+  made it awkward to keep the panel beside Claude Code in the secondary sidebar.
+
 ## 0.4.3
 
 - A chosen video now plays on its own. It used to wait for a click in the panel
