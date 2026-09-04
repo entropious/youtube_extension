@@ -246,6 +246,59 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         });
     });
 
+    describe('Collapsing and reopening the panel', () => {
+        function attach() {
+            const webview = createMockWebview();
+            const view = createMockWebviewView(webview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+            const onVisibility = view.onDidChangeVisibility.getCall(0).args[0];
+            return { webview, view, onVisibility };
+        }
+
+        const sent = (webview: any, type: string) =>
+            webview.postMessage.getCalls().map((c: any) => c.args[0]).filter((m: any) => m?.type === type);
+
+        it('pauses a collapsed panel, which keeps its page alive', async () => {
+            const { webview, view, onVisibility } = attach();
+            await provider.loadUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 10, 'sidebar');
+            webview.postMessage.resetHistory();
+
+            view.visible = false;
+            onVisibility();
+
+            expect(sent(webview, 'autoPause').map((m: any) => m.reason)).to.include('hidden');
+        });
+
+        it('carries on without reloading when the panel comes back', async () => {
+            const { webview, view, onVisibility } = attach();
+            await provider.loadUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 10, 'sidebar');
+            view.visible = false;
+            onVisibility();
+            webview.postMessage.resetHistory();
+
+            view.visible = true;
+            onVisibility();
+
+            // Reloading would refetch the stream and jump back to the saved spot.
+            expect(sent(webview, 'loadUrl')).to.be.empty;
+            expect(sent(webview, 'autoResume').map((m: any) => m.reason)).to.include('hidden');
+        });
+
+        it('loads the video that was chosen while the panel was away', async () => {
+            const { webview, view, onVisibility } = attach();
+            await provider.loadUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 10, 'sidebar');
+            view.visible = false;
+            onVisibility();
+            (provider as any)._lastUrl = 'https://www.youtube.com/watch?v=kJQP7kiw5Fk';
+            webview.postMessage.resetHistory();
+
+            view.visible = true;
+            onVisibility();
+
+            expect(sent(webview, 'loadUrl')).to.have.length(1);
+        });
+    });
+
     describe('Manual Pause Syncing', () => {
         it('should set _isManualPause to true when active view is paused', async () => {
             const webview = createMockWebview();
@@ -262,6 +315,21 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
             // 2. Pause the active view
             await handler({ type: 'playbackStatus', status: 'paused' });
             expect((provider as any)._isManualPause).to.be.true;
+        });
+
+        it('should not treat a pause in a hidden view as the viewer stopping playback', async () => {
+            const webview = createMockWebview();
+            const view = createMockWebviewView(webview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+            const handler = webview.onDidReceiveMessage.getCall(0).args[0];
+            await handler({ type: 'playbackStatus', status: 'playing' });
+
+            // Collapsing the panel pauses the video on its own; when it comes
+            // back the video has to resume, so this must not count as manual.
+            view.visible = false;
+            await handler({ type: 'playbackStatus', status: 'paused' });
+
+            expect((provider as any)._isManualPause).to.be.false;
         });
 
         it('should reset _isManualPause to false when playing starts', async () => {
