@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.5
+
+- Collapsing the panel now pauses the video instead of letting it play on out of
+  sight, and reopening the panel carries on from the same second rather than
+  reloading the stream and jumping back.
+- A video paused by collapsing the panel starts again when the panel returns; it
+  used to be mistaken for a pause set by hand, which suppresses autoplay.
+
 ## 0.4.4
 
 - Playback recovers on its own when the stream breaks — after a long pause, or
