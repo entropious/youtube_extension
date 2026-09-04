@@ -35,6 +35,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	private _currentPlaylistTitle?: string;
 	public followClaudeEnabled = false;
 	private _claudeWatcher?: fs.FSWatcher;
+	private _lastClaudeState?: claudeHooks.ClaudeState;
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
@@ -100,13 +101,32 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	/** Plays while Claude works, pauses the moment it waits for you. */
+	/**
+	 * Plays while Claude works, pauses the moment it waits for you.
+	 *
+	 * Every VS Code window runs its own copy of the extension and watches the
+	 * same state file, so all of them would start playing at once. Only a window
+	 * whose panel is on screen starts anything; pausing stays unconditional,
+	 * since a hidden window may well be the one making noise.
+	 */
 	private applyClaudeState() {
-		if (claudeHooks.readState() === 'busy') {
+		const state = claudeHooks.readState();
+		// Replacing the file by rename raises more than one event; the state it
+		// now holds is what matters, not how many times it was announced.
+		if (state === this._lastClaudeState) return;
+		this._lastClaudeState = state;
+
+		if (state === 'busy' && !this.hasVisibleView()) return;
+
+		if (state === 'busy') {
 			this.autoResume('claude');
 		} else {
 			this.autoPause('claude');
 		}
+	}
+
+	private hasVisibleView(): boolean {
+		return Boolean(this._tabPanel?.visible || this._sidebarView?.visible);
 	}
 
 	/** Pauses on behalf of `reason`, unless the viewer paused by hand. */
@@ -114,7 +134,12 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this.postToAll({ type: 'autoPause', reason });
 	}
 
-	/** Drops `reason`; playback resumes once nothing else holds it paused. */
+	/**
+	 * Drops `reason`; playback resumes once nothing else holds it paused.
+	 *
+	 * Sent to one view on purpose — the pause goes to all of them, but resuming
+	 * everywhere would start the sidebar and the tab playing at once.
+	 */
 	public autoResume(reason: string) {
 		this.postToActive({ type: 'autoResume', reason });
 	}
@@ -148,13 +173,13 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private postToActive(message: any) {
-		let target: vscode.WebviewPanel | vscode.WebviewView | undefined;
+		// Falls back to whichever view exists: the tab can be closed while it is
+		// still marked active, and a message addressed to it would be lost —
+		// which is how a resume could go missing and leave the video paused.
+		const target = (this._isTabActive && this._tabPanel)
+			? this._tabPanel
+			: (this._sidebarView ?? this._tabPanel);
 
-		if (this._isTabActive && this._tabPanel) {
-			target = this._tabPanel;
-		} else {
-			target = this._sidebarView;
-		}
 		target?.webview.postMessage(message);
 	}
 
@@ -201,16 +226,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._lastUrl = url;
 		this._lastTime = startTime;
 
-		let hasInteracted = false;
-		if (targetView === 'tab') {
-			hasInteracted = this._tabHasInteracted;
-		} else if (targetView === 'sidebar') {
-			hasInteracted = this._sidebarHasInteracted;
-		} else {
-			hasInteracted = this._isTabActive ? this._tabHasInteracted : this._sidebarHasInteracted;
-		}
-
-		const autoplay = hasInteracted && !(isSwitching && this._isManualPause);
+		// A chosen video plays. The only thing that holds it back is the viewer
+		// having paused this very video by hand; if the browser refuses sound,
+		// the player starts muted and offers its own play button.
+		const autoplay = !(isSwitching && this._isManualPause);
 
 		const formattedUrl = this._formatYoutubeUrl(url, startTime, autoplay);
 		const playlistId = extractPlaylistId(url);
@@ -266,12 +285,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		const finalStartTime = this._lastTime || 0;
 		void this._handleLoadRequest(url, forcePlaylistRefresh);
 
-		const hasInteracted = isTab ? this._tabHasInteracted : this._sidebarHasInteracted;
-
-		const formattedUrl = this._formatYoutubeUrl(url, finalStartTime, hasInteracted);
+		const formattedUrl = this._formatYoutubeUrl(url, finalStartTime, true);
 		const playlistId = extractPlaylistId(url);
 		const videoId = extractVideoId(url) || '';
-		
+
 		this._syncPlaylistState(playlistId);
 		const canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
 
@@ -280,7 +297,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			value: formattedUrl,
 			originalUrl: url,
 			startTime: finalStartTime,
-			autoplay: hasInteracted,
+			autoplay: true,
 			playlistId: playlistId,
 			playlistTitle: this._currentPlaylistTitle,
 			canPrev: canPrev,

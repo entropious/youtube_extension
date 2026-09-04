@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.3
+
+- A chosen video now plays on its own. It used to wait for a click in the panel
+  first, so the first video after starting VS Code always sat paused.
+- If the browser refuses to start with sound, playback begins muted and a large
+  crossed-out speaker appears in the middle of the picture. It takes the click at
+  any moment — the video need not have loaded — and carries on with sound from
+  the same second. It no longer appears when sound is playing perfectly well:
+  `play()` also rejects when a new load interrupts it, and that was being read
+  as a refusal.
+- Claude Sync now resumes reliably. Resuming was addressed only to the view
+  believed to be active, so closing the tab with the player lost the command and
+  the video stayed paused; a stream let go after a long pause had nothing to
+  play; and one rename of the state file was acted on more than once.
+- Claude Sync no longer starts a video in every open VS Code window. Each window
+  watches the same state file, so all of them used to play at once; now only the
+  window whose panel is on screen starts anything. Pausing still reaches them
+  all, since a hidden window may be the one making noise.
+
 ## 0.4.2
 
 - Playback starts about twice as fast. The two slow steps — yt-dlp resolving the

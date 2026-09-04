@@ -131,6 +131,67 @@ describe('Claude sync in the provider', () => {
         expect(fs.existsSync(hooks.hookScript)).to.equal(true);
     });
 
+    it('stays quiet in a window whose panel is not on screen', async () => {
+        provider = new Provider(extensionUri, memento as any, () => 8080);
+        const hidden = createMockWebviewView(webview);
+        hidden.visible = false;
+        provider.resolveWebviewView(hidden as any, {} as any, {} as any);
+        provider.setClaudeSync(true);
+        await settled();
+        webview.postMessage.resetHistory();
+
+        // Every window watches the same state file; without this they would all
+        // start playing at once.
+        fs.writeFileSync(hooks.stateFile, 'busy');
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        expect(messagesOfType('autoResume')).to.be.empty;
+    });
+
+    it('still pauses a hidden window, which may be the one making noise', async () => {
+        provider = new Provider(extensionUri, memento as any, () => 8080);
+        const hidden = createMockWebviewView(webview);
+        hidden.visible = false;
+        provider.resolveWebviewView(hidden as any, {} as any, {} as any);
+        provider.setClaudeSync(true);
+        await settled();
+        fs.writeFileSync(hooks.stateFile, 'busy');
+        await new Promise(resolve => setTimeout(resolve, 200));
+        webview.postMessage.resetHistory();
+
+        fs.writeFileSync(hooks.stateFile, 'idle');
+
+        expect(await waitFor(() => messagesOfType('autoPause').length > 0)).to.equal(true);
+    });
+
+    it('acts once per change, however many events the rename raises', async () => {
+        provider = new Provider(extensionUri, memento as any, () => 8080);
+        attachPanel();
+        provider.setClaudeSync(true);
+        await settled();
+        webview.postMessage.resetHistory();
+
+        fs.writeFileSync(hooks.stateFile, 'busy');
+        await waitFor(() => messagesOfType('autoResume').length > 0);
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        expect(messagesOfType('autoResume')).to.have.length(1);
+    });
+
+    it('reaches the sidebar even when the tab is marked active but gone', async () => {
+        provider = new Provider(extensionUri, memento as any, () => 8080);
+        attachPanel();
+        // The tab was playing and has since been closed.
+        (provider as any)._isTabActive = true;
+        provider.setClaudeSync(true);
+        await settled();
+        webview.postMessage.resetHistory();
+
+        fs.writeFileSync(hooks.stateFile, 'busy');
+
+        expect(await waitFor(() => messagesOfType('autoResume').length > 0)).to.equal(true);
+    });
+
     it('tells the panel to play while Claude works', async () => {
         provider = new Provider(extensionUri, memento as any, () => 8080);
         attachPanel();
