@@ -853,12 +853,45 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		display: none; animation: spin 1s linear infinite;
 	}
 	@keyframes spin { to { transform: rotate(360deg); } }
+	/* Shown when the browser refuses to start with sound. Deliberately large and
+	   centred: it is the one thing to aim at, and it takes the click whether or
+	   not the video has loaded yet. */
+	#unmute {
+		position: absolute; inset: 0; display: none;
+		align-items: center; justify-content: center;
+		background: rgba(0,0,0,.35); border: none; padding: 0; margin: 0;
+		cursor: pointer; color: #fff;
+	}
+	#unmute.shown { display: flex; }
+	#unmute .circle {
+		width: 76px; height: 76px; border-radius: 50%;
+		background: rgba(0,0,0,.6); border: 2px solid rgba(255,255,255,.85);
+		display: flex; align-items: center; justify-content: center;
+		transition: transform .15s, background .15s;
+	}
+	#unmute:hover .circle { transform: scale(1.06); background: rgba(0,0,0,.75); }
+	#unmute svg { display: block; }
+	#unmute .hint {
+		position: absolute; bottom: 30%; left: 0; right: 0; text-align: center;
+		font-size: 12px; color: rgba(255,255,255,.85); text-shadow: 0 1px 3px rgba(0,0,0,.8);
+	}
 </style>
 </head>
 <body>
 <div id="stage">
 	<video id="v" playsinline></video>
 	<div id="spin"></div>
+	<button id="unmute" title="Play with sound">
+		<span class="circle">
+			<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+				stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M4 9v6h4l5 4V5L8 9H4z"/>
+				<line x1="16" y1="9" x2="21" y2="15"/>
+				<line x1="21" y1="9" x2="16" y2="15"/>
+			</svg>
+		</span>
+		<span class="hint">Click to play with sound</span>
+	</button>
 	<div id="msg"></div>
 	<div id="bar">
 		<button id="play" title="Play/Pause">▶</button>
@@ -882,6 +915,7 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	var timeLabel = document.getElementById('time');
 	var msg = document.getElementById('msg');
 	var spin = document.getElementById('spin');
+	var unmute = document.getElementById('unmute');
 
 	var videoId = ${JSON.stringify(videoId)};
 	var duration = 0;
@@ -907,6 +941,42 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	}
 
 	function showSpinner(on) { spin.style.display = on ? 'block' : 'none'; }
+
+	/**
+	 * Starting with sound needs a click somewhere in this frame first; browsers
+	 * only allow a muted start until then. So playback begins muted with the
+	 * button up, and the click that presses it — whenever it comes, before the
+	 * video has loaded or after — is what turns the sound on.
+	 */
+	function offerSound(on) {
+		unmute.classList.toggle('shown', on);
+	}
+
+	function play() {
+		var promise = video.play();
+		if (!promise || !promise.catch) return;
+
+		promise.catch(function(err) {
+			// play() also rejects when a new load interrupts it, which happens
+			// routinely while starting; only a refusal by policy means the sound
+			// is what stands in the way.
+			if (!err || err.name !== 'NotAllowedError') return;
+
+			video.muted = true;
+			offerSound(true);
+			var muted = video.play();
+			if (muted && muted.catch) muted.catch(function() { /* the button is up */ });
+		});
+	}
+
+	unmute.addEventListener('click', function() {
+		video.muted = false;
+		muteBtn.textContent = '🔊';
+		offerSound(false);
+		// The click counts as the gesture, so this attempt is allowed.
+		var promise = video.play();
+		if (promise && promise.catch) promise.catch(function() {});
+	});
 
 	function format(sec) {
 		sec = Math.max(0, Math.floor(sec || 0));
@@ -948,10 +1018,7 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		showSpinner(true);
 		video.src = mediaUrl(videoId, offset);
 		video.load();
-		if (autoplay) {
-			var p = video.play();
-			if (p && p.catch) p.catch(function() { /* autoplay may be refused; the bar still works */ });
-		}
+		if (autoplay) play();
 		paint();
 	}
 
@@ -1004,8 +1071,10 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	function togglePlay() {
 		var playing = video.paused;
 		if (playing) {
-			var p = video.play();
-			if (p && p.catch) p.catch(function() {});
+			// A press here is a gesture, so sound is allowed again.
+			video.muted = false;
+			offerSound(false);
+			play();
 		} else {
 			video.pause();
 		}
@@ -1107,7 +1176,14 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	// never fires 'playing', and its first frames arriving are what ends the wait.
 	video.addEventListener('loadeddata', function() { showSpinner(false); paint(); });
 	video.addEventListener('canplay', function() { showSpinner(false); });
-	video.addEventListener('playing', function() { showSpinner(false); reportState(1); revealBar(); paint(); });
+	video.addEventListener('playing', function() {
+		showSpinner(false);
+		// Playing with sound is proof the offer is not needed.
+		if (!video.muted) offerSound(false);
+		reportState(1);
+		revealBar();
+		paint();
+	});
 	video.addEventListener('pause', function() { reportState(2); bar.classList.add('shown'); paint(); });
 	video.addEventListener('waiting', function() { showSpinner(true); });
 	video.addEventListener('timeupdate', paint);
@@ -1150,12 +1226,18 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 			var autoplay = data.autoplay !== false;
 			if (nextId && nextId !== videoId) load(nextId, at, autoplay);
 			else if (Math.abs(at - position()) > 1) startStream(at, autoplay);
-			else if (autoplay) video.play(); else video.pause();
+			else if (autoplay) play(); else video.pause();
 			return;
 		}
 
 		if (data.event === 'command') {
-			if (data.func === 'playVideo') video.play();
+			if (data.func === 'playVideo') {
+				// The stream is let go while a video is cued or after a failure,
+				// and play() alone would have nothing to play: fetch it again
+				// from where playback stood.
+				if (playing) play();
+				else startStream(position(), true);
+			}
 			else if (data.func === 'pauseVideo') video.pause();
 			else if (data.func === 'stopVideo') stopStream();
 		}

@@ -1,7 +1,7 @@
 # YouTube Player for VS Code 📺
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Marketplace](https://img.shields.io/visual-studio-marketplace/v/entro.youtube-panel.svg)](https://marketplace.visualstudio.com/items?itemName=entro.youtube-panel)
+[![Release](https://img.shields.io/github/v/release/entropious/youtube_extension)](https://github.com/entropious/youtube_extension/releases/latest)
 
 ![YouTube Player Screenshot](media/description.png)
 
@@ -19,6 +19,7 @@ Experience YouTube like never before, right from your editor! Watch tutorials, l
 - 📺 **Channel Navigation**: Explore all videos from the current video's channel in chronological order with a single click.
 - 🔄 **Continuous Play & Related Videos**: Discover and autoplay related content when a video ends — perfect for keeping the flow in your workspace.
 - ⚡ **Global Media Controls**: Play, pause, or skip to the next video using global commands and customizable keyboard shortcuts (`cmd+alt+p`, `cmd+alt+o`).
+- 🤖 **Claude Sync**: Flip the switch in the top right and playback follows Claude Code — video plays while Claude works and pauses the moment it needs you. A pause you set by hand always wins; Claude never restarts a video you stopped.
 - 🛠️ **Seamless Syncing**: Switch between the sidebar and editor tab; your video and playback position sync automatically.
 - 🧬 **Deeplink Support**: Open videos from your browser or other apps using \`vscode://\` (e.g., \`vscode://entro.youtube-panel/load?url=URL&t=120\`).
 - 🎨 **Modern Glassmorphism UI**: 
@@ -52,12 +53,6 @@ YouTube tightens its bot checks from time to time and can refuse a video to an a
 > [!IMPORTANT]
 > **Where are the controls?**
 > To stay out of your way while coding, everything (search bar, buttons) is hidden by default. **Simply hover your mouse over the top-left corner** of the player at any time to instantly reveal the controls.
-
-## 🤖 Claude Sync
-
-The switch in the top right ties playback to Claude Code: video plays while
-Claude is working and pauses the moment it needs you. A pause you set by hand
-always wins — Claude never restarts a video you stopped.
 
 ## ⌨️ Commands
 
