@@ -36,6 +36,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	public followClaudeEnabled = false;
 	private _claudeWatcher?: fs.FSWatcher;
 	private _lastClaudeState?: claudeHooks.ClaudeState;
+	/** What each view was last told to load, so a return to it need not reload. */
+	private _sidebarUrl?: string;
+	private _tabUrl?: string;
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
@@ -262,10 +265,14 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			authorName: this._currentChannelName
 		};
 		if (targetView === 'tab' && this._tabPanel) {
+			this._tabUrl = url;
 			this._tabPanel.webview.postMessage(message);
 		} else if (targetView === 'sidebar' && this._sidebarView) {
+			this._sidebarUrl = url;
 			this._sidebarView.webview.postMessage(message);
 		} else {
+			if (this._isTabActive && this._tabPanel) this._tabUrl = url;
+			else if (this._sidebarView) this._sidebarUrl = url;
 			this.postToActive(message);
 		}
 		await savePromise;
@@ -1076,12 +1083,22 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			if (webviewView.visible) this._isTabActive = false;
 			const url = this._lastUrl;
 			const time = this._lastTime;
-			if (webviewView.visible && url) {
-				this.loadUrl(url, time, 'sidebar');
-			} else if (!webviewView.visible && url) {
-					void this._saveTimestamp(url, time);
-				if (this._tabPanel) this.loadUrl(url, time, 'tab');
+			if (!url) return;
+
+			if (webviewView.visible) {
+				// The same video is still loaded here, so it only has to carry on:
+				// reloading it would fetch the stream again and jump back to the
+				// timestamp saved when the panel was collapsed.
+				if (this._sidebarUrl === url) this.autoResume('hidden');
+				else this.loadUrl(url, time, 'sidebar');
+				return;
 			}
+
+			void this._saveTimestamp(url, time);
+			// A collapsed panel keeps its page alive, and would otherwise go on
+			// playing out of sight.
+			this.autoPause('hidden');
+			if (this._tabPanel) this.loadUrl(url, time, 'tab');
 		});
 
 		let initialUrl = 'about:blank';
@@ -1153,7 +1170,11 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						this._isTabActive = isTab;
 						this.pauseAllExcept(isTab);
 					} else if (data.status === 'paused') {
-						if (isTab === this._isTabActive) {
+						// A view that is off screen pauses because it was hidden, not
+						// because the viewer decided so — counting that as a manual
+						// pause would keep the video from resuming when it comes back.
+						const onScreen = isTab ? this._tabPanel?.visible : this._sidebarView?.visible;
+						if (isTab === this._isTabActive && onScreen !== false) {
 							this._isManualPause = true;
 						}
 					}
