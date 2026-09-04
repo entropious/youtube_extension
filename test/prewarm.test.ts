@@ -3,7 +3,7 @@ import * as sinon from 'sinon';
 import { EventEmitter } from 'events';
 import { PassThrough, Readable } from 'stream';
 import * as childProcess from 'child_process';
-import { handleMedia, prefetchStream, prewarmStream, setToolConfig } from '../src/ytproxy';
+import { handleMedia, prefetchStream, prewarmStream, setToolConfig, shutdownStreams } from '../src/ytproxy';
 
 /** yt-dlp answers after `delayMs`, so a request can arrive mid-lookup. */
 function fakeYtDlp(json: string, delayMs = 0) {
@@ -221,6 +221,32 @@ describe('Warming a start up', () => {
         await handleMedia(res, 'otherVideoX', 0);
 
         expect(previous.kill.calledWith('SIGKILL')).to.equal(true);
+    });
+
+    it('leaves nothing fetching once a request takes over', async () => {
+        prewarmStream(videoId, 300);
+        await waitForFfmpeg(1);
+        const stray = ffmpegs[0];
+
+        // The page asks for the same video from another point: the warm-up is
+        // of no use to anyone and must not go on downloading.
+        const res = fakeResponse();
+        await handleMedia(res, videoId, 0);
+
+        expect(stray.kill.called).to.equal(true);
+        expect(ffmpegs.filter(p => !p.killed)).to.have.length(1);
+    });
+
+    it('ends every stream when the extension shuts down', async () => {
+        const res = fakeResponse();
+        await handleMedia(res, videoId, 0);
+        prewarmStream('otherVideoX', 0);
+        await waitForFfmpeg(2);
+
+        // A process outlives the extension unless it is ended here.
+        shutdownStreams();
+
+        expect(ffmpegs.every(p => p.killed)).to.equal(true);
     });
 
     describe('prefetchStream', () => {

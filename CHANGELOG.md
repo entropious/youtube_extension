@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.6
+
+- Stray ffmpeg processes no longer drain the battery. One was left running when
+  the extension unloaded, another was started beside a video already playing,
+  and a third could lose the only reference to it and keep fetching to the end
+  of the video. A single stream is now kept, everything else is ended, and
+  closing the window leaves nothing behind.
+
 ## 0.4.5
 
 - Collapsing the panel now pauses the video instead of letting it play on out of
