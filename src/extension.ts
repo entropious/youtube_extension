@@ -141,7 +141,12 @@ export async function activate(context: vscode.ExtensionContext) {
 	provider = new YouTubeViewProvider(context.extensionUri, context.globalState, () => proxyPort);
 
 	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider(YouTubeViewProvider.viewType, provider)
+		// Keeps the player alive while the view is hidden — moving it to another
+		// place in the workbench, or switching to a neighbouring view, would
+		// otherwise reload the page and start the video over.
+		vscode.window.registerWebviewViewProvider(YouTubeViewProvider.viewType, provider, {
+			webviewOptions: { retainContextWhenHidden: true }
+		})
 	);
 
 	context.subscriptions.push(
