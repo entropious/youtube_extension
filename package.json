@@ -12,6 +12,13 @@
     "Other"
   ],
   "icon": "media/icon.png",
+  "keywords": [
+    "youtube",
+    "video",
+    "player",
+    "playlist",
+    "music"
+  ],
   "activationEvents": [
     "onStartupFinished",
     "onUri"
