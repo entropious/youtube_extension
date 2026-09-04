@@ -846,6 +846,9 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		position: absolute; inset: 0; display: none;
 		align-items: center; justify-content: center; text-align: center;
 		padding: 24px; box-sizing: border-box; line-height: 1.5; color: #ddd;
+		/* Covers the whole frame, so without this it swallows every click meant
+		   for the picture — pausing by clicking would stop working. */
+		pointer-events: none;
 	}
 	#spin {
 		position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px;
@@ -928,6 +931,11 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	// must not have the surrounding UI record progress for a video that never
 	// started.
 	var playing = false;
+	// Recovery attempts since the last time playback actually ran.
+	var retries = 0;
+	var MAX_RETRIES = 3;
+	// Whether playback was running when it broke, so the retry resumes it.
+	var wasPlaying = false;
 
 	function send(data) { window.parent.postMessage(data, '*'); }
 
@@ -953,6 +961,7 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	}
 
 	function play() {
+		wasPlaying = true;
 		var promise = video.play();
 		if (!promise || !promise.catch) return;
 
@@ -1015,6 +1024,10 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	function startStream(at, autoplay) {
 		offset = Math.max(0, at || 0);
 		playing = true;
+		wasPlaying = Boolean(autoplay);
+		// Whatever went wrong before is being retried right now; the old notice
+		// must not sit over a picture that plays again.
+		showMessage('');
 		showSpinner(true);
 		video.src = mediaUrl(videoId, offset);
 		video.load();
@@ -1076,6 +1089,7 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 			offerSound(false);
 			play();
 		} else {
+			wasPlaying = false;
 			video.pause();
 		}
 		// Told apart from an automatic pause by the panel, which lets a choice
@@ -1178,6 +1192,10 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	video.addEventListener('canplay', function() { showSpinner(false); });
 	video.addEventListener('playing', function() {
 		showSpinner(false);
+		// Playback runs again: the failure is over and the budget is fresh.
+		showMessage('');
+		retries = 0;
+		wasPlaying = true;
 		// Playing with sound is proof the offer is not needed.
 		if (!video.muted) offerSound(false);
 		reportState(1);
@@ -1200,11 +1218,21 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		if (!playing) return;
 		showSpinner(false);
 		var err = video.error;
-		// A stream dropped mid-playback is usually an expired URL: the server
-		// resolves the video again, so one restart at the same spot recovers it.
-		if (err && err.code === 2 && position() > 0) { startStream(position(), true); return; }
-		showMessage('Playback failed' + (err ? ' (code ' + err.code + ')' : ''));
-		logError('Media element error', err && err.code);
+		var code = err ? err.code : 0;
+
+		// A stream that dies mid-playback — the encode ended, the link expired,
+		// what arrived no longer decodes — is fixed the same way: ask the server
+		// for it again from where playback stood. Retries are capped so a video
+		// that truly cannot play stops rather than loops.
+		if ((code === 2 || code === 3) && retries < MAX_RETRIES) {
+			retries++;
+			logError('Media element error, retrying', code);
+			startStream(position(), !video.paused || wasPlaying);
+			return;
+		}
+
+		showMessage('Playback failed' + (err ? ' (code ' + code + ')' : ''));
+		logError('Media element error', code);
 	});
 
 	// The webview tracks progress and chapters from this heartbeat.
@@ -1238,7 +1266,7 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 				if (playing) play();
 				else startStream(position(), true);
 			}
-			else if (data.func === 'pauseVideo') video.pause();
+			else if (data.func === 'pauseVideo') { wasPlaying = false; video.pause(); }
 			else if (data.func === 'stopVideo') stopStream();
 		}
 	});
