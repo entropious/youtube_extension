@@ -738,9 +738,9 @@ export function ffmpegArgs(stream: StreamInfo, startAt = 0, trimmed?: TrimmedInp
 /** Turns a yt-dlp failure into something the player page can act on. */
 export function explain(message: string): string {
 	// YouTube refuses a share of its catalogue to anonymous sessions, and which
-	// share that is moves with its bot checks; a current yt-dlp usually gets in.
+	// share that is moves with its bot checks; a newer yt-dlp often gets in.
 	if (/not a bot|sign in to confirm/i.test(message)) {
-		return 'YouTube refused this video to an anonymous session. Updating yt-dlp usually clears it.';
+		return 'YouTube refused this video to an anonymous session. A newer yt-dlp often gets past it.';
 	}
 
 	if (/is not available|private video|members-only|age/i.test(message)) {
@@ -748,6 +748,45 @@ export function explain(message: string): string {
 	}
 
 	return message;
+}
+
+/**
+ * The command that updates yt-dlp on this machine.
+ *
+ * Which one it is depends on how it was installed — a Homebrew copy cannot
+ * update itself, a pipx one is not updated by pip — so the path it was found at
+ * decides, and only a plain binary is told to update itself.
+ */
+export function updateCommand(toolPath: string | null, command: string): string {
+	const path = (toolPath || command).toLowerCase();
+
+	if (path.includes('cellar') || path.includes('homebrew') || path.includes('linuxbrew')) {
+		return 'brew upgrade yt-dlp';
+	}
+	if (path.includes('pipx')) return 'pipx upgrade yt-dlp';
+	if (path.includes('site-packages') || path.includes('python')) return 'python3 -m pip install -U yt-dlp';
+	if (path.includes('scoop')) return 'scoop update yt-dlp';
+	if (path.includes('chocolatey')) return 'choco upgrade yt-dlp';
+	if (process.platform === 'win32') return 'winget upgrade yt-dlp.yt-dlp';
+
+	// A standalone build knows how to replace itself.
+	return `${command} -U`;
+}
+
+/** Where the tool actually lives, so the right update command can be named. */
+function toolPath(command: string): Promise<string | null> {
+	if (command.includes('/') || command.includes('\\')) return Promise.resolve(command);
+
+	return new Promise(resolve => {
+		const proc = spawn(process.platform === 'win32' ? 'where' : 'which', [command]);
+		const out: Buffer[] = [];
+		proc.stdout.on('data', c => out.push(c));
+		proc.on('error', () => resolve(null));
+		proc.on('close', code => {
+			if (code !== 0) { resolve(null); return; }
+			resolve(Buffer.concat(out).toString('utf8').split(/\r?\n/)[0].trim() || null);
+		});
+	});
 }
 
 /** Reports what the player page needs before it can show a video. */
@@ -764,8 +803,15 @@ export async function handleInfo(res: http.ServerResponse, videoId: string): Pro
 		res.end(JSON.stringify({ duration: info.duration, title: info.title }));
 	} catch (e) {
 		const missing = e instanceof ToolMissingError;
+		const raw = e instanceof Error ? e.message : String(e);
+		// A bot check is the one failure the viewer can act on, so the command
+		// that updates yt-dlp comes with it, ready to copy.
+		const fix = /not a bot|sign in to confirm/i.test(raw)
+			? updateCommand(await toolPath(tools.ytDlpPath), tools.ytDlpPath)
+			: undefined;
+
 		res.writeHead(missing ? 501 : 502);
-		res.end(JSON.stringify({ error: explain(e instanceof Error ? e.message : String(e)) }));
+		res.end(JSON.stringify({ error: explain(raw), fix }));
 	}
 }
 
@@ -910,6 +956,25 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		   for the picture — pausing by clicking would stop working. */
 		pointer-events: none;
 	}
+	/* The suggested command is the one part of the notice worth reaching for. */
+	#msg .msg-inner { max-width: 520px; }
+	#msg-fix {
+		display: flex; align-items: center; gap: 10px; margin-top: 14px;
+		background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.12);
+		border-radius: 6px; padding: 8px 10px; pointer-events: auto;
+	}
+	#msg-fix[hidden] { display: none; }
+	#msg-command {
+		flex: 1; text-align: left; overflow-x: auto; white-space: pre;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+		color: #fff; user-select: all;
+	}
+	#msg-copy {
+		border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.1);
+		color: #fff; border-radius: 5px; padding: 4px 10px; font: inherit;
+		font-size: 12px; cursor: pointer;
+	}
+	#msg-copy:hover { background: rgba(255,255,255,.18); }
 	#spin {
 		position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px;
 		border: 3px solid rgba(255,255,255,.25); border-top-color: #fff; border-radius: 50%;
@@ -955,7 +1020,15 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		</span>
 		<span class="hint">Click to play with sound</span>
 	</button>
-	<div id="msg"></div>
+	<div id="msg">
+		<div class="msg-inner">
+			<div id="msg-text"></div>
+			<div id="msg-fix" hidden>
+				<code id="msg-command"></code>
+				<button id="msg-copy">Copy</button>
+			</div>
+		</div>
+	</div>
 	<div id="bar">
 		<button id="play" title="Play/Pause">▶</button>
 		<span id="time">0:00 / 0:00</span>
@@ -977,6 +1050,10 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	var vol = document.getElementById('vol');
 	var timeLabel = document.getElementById('time');
 	var msg = document.getElementById('msg');
+	var msgText = document.getElementById('msg-text');
+	var msgFix = document.getElementById('msg-fix');
+	var msgCommand = document.getElementById('msg-command');
+	var copyBtn = document.getElementById('msg-copy');
 	var spin = document.getElementById('spin');
 	var unmute = document.getElementById('unmute');
 
@@ -1003,9 +1080,42 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		send({ type: 'proxyLog', level: 'error', message: '[YOUTUBE_EXT][PROXY] ' + message, args: detail ? [String(detail)] : [] });
 	}
 
-	function showMessage(text) {
-		msg.textContent = text || '';
+	function showMessage(text, command) {
+		msgText.textContent = text || '';
 		msg.style.display = text ? 'flex' : 'none';
+
+		msgCommand.textContent = command || '';
+		msgFix.hidden = !command;
+		copyBtn.textContent = 'Copy';
+	}
+
+	// The clipboard API is not always granted inside a webview, hence the
+	// hidden-selection fallback.
+	copyBtn.addEventListener('click', function() {
+		var text = msgCommand.textContent;
+		var done = function(ok) {
+			copyBtn.textContent = ok ? 'Copied' : 'Select and copy';
+			setTimeout(function() { copyBtn.textContent = 'Copy'; }, 1600);
+		};
+
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(text).then(function() { done(true); }, function() { copyFallback(text, done); });
+			return;
+		}
+		copyFallback(text, done);
+	});
+
+	function copyFallback(text, done) {
+		var area = document.createElement('textarea');
+		area.value = text;
+		area.style.position = 'fixed';
+		area.style.opacity = '0';
+		document.body.appendChild(area);
+		area.select();
+		var ok = false;
+		try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+		document.body.removeChild(area);
+		done(ok);
 	}
 
 	function showSpinner(on) { spin.style.display = on ? 'block' : 'none'; }
@@ -1099,7 +1209,13 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		return fetch('/info?v=' + encodeURIComponent(id))
 			.then(function(r) { return r.json().then(function(body) { return { ok: r.ok, body: body }; }); })
 			.then(function(res) {
-				if (!res.ok) throw new Error(res.body && res.body.error || 'Failed to resolve the video');
+				if (!res.ok) {
+					var failure = new Error(res.body && res.body.error || 'Failed to resolve the video');
+					// The server may name a command that fixes it; the notice offers
+					// it for copying.
+					failure.fix = res.body && res.body.fix;
+					throw failure;
+				}
 				return res.body;
 			});
 	}
@@ -1130,7 +1246,7 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 			if (videoId !== id) return;
 			stopStream();
 			showSpinner(false);
-			showMessage(String(err && err.message || err));
+			showMessage(String(err && err.message || err), err && err.fix);
 			logError('Failed to load video', err && err.message || err);
 		});
 	}
