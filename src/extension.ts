@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import { YouTubeViewProvider } from './provider';
-import { checkTools, handleInfo, handleMedia, handlePlayerPage, handlePlaylist, handleTools, setServerPort, setToolConfig } from './ytproxy';
+import { checkTools, handleInfo, handleMedia, handlePlayerPage, handlePlaylist, handleTools, setServerPort, setToolConfig, shutdownStreams } from './ytproxy';
 
 let proxyServer: http.Server | null = null;
 let proxyPort = 0;
@@ -89,6 +89,10 @@ export async function deactivate() {
 	if (provider) {
 		await provider.saveCurrentState();
 	}
+
+	// ffmpeg outlives the extension unless it is ended here, and a stray one
+	// keeps its memory and its share of the battery.
+	shutdownStreams();
 
 	if (proxyServer) {
 		proxyServer.close();

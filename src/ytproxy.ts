@@ -111,9 +111,33 @@ function launcherFor(command: string): Launcher {
 	return launchers.get(command) ?? { file: command, prefix: [] };
 }
 
+/**
+ * Every ffmpeg this server starts, so none can be lost.
+ *
+ * A process whose only reference was dropped keeps running to the end of the
+ * video, holding memory and fetching data nobody reads; the register is what
+ * makes "end everything but the one in use" possible.
+ */
+const running = new Set<ReturnType<typeof spawn>>();
+
 export function runTool(command: string, args: string[]) {
 	const launcher = launcherFor(command);
-	return spawn(launcher.file, [...launcher.prefix, ...args]);
+	const proc = spawn(launcher.file, [...launcher.prefix, ...args]);
+
+	running.add(proc);
+	proc.on('close', () => running.delete(proc));
+	proc.on('error', () => running.delete(proc));
+
+	return proc;
+}
+
+/** Ends every stream except the ones still wanted. */
+function killStrays(...keep: (ReturnType<typeof spawn> | null | undefined)[]): void {
+	for (const proc of running) {
+		if (keep.includes(proc)) continue;
+		proc.kill('SIGKILL');
+		running.delete(proc);
+	}
 }
 
 /** Asks Windows where a command lives, so a wrapper can be run explicitly. */
@@ -315,11 +339,26 @@ let warmStream: WarmStream | null = null;
 
 /** The stream currently being served, kept so a new one can end it. */
 let activeStream: ReturnType<typeof runTool> | null = null;
+let activeVideoId: string | null = null;
 
 function stopActiveStream() {
+	activeVideoId = null;
 	if (!activeStream) return;
 	activeStream.kill('SIGKILL');
 	activeStream = null;
+}
+
+/**
+ * Ends every ffmpeg this server started.
+ *
+ * Nothing else will: a process outlives the extension that spawned it, and one
+ * left behind holds its memory and wakes up whenever its pipe drains — which on
+ * a laptop is felt as battery going flat.
+ */
+export function shutdownStreams(): void {
+	stopActiveStream();
+	dropWarmStream();
+	killStrays();
 }
 
 function dropWarmStream() {
@@ -342,6 +381,9 @@ function dropWarmStream() {
  */
 export function prewarmStream(videoId: string, startAt = 0): void {
 	if (!videoId) return;
+	// Already being served: the page got there first, and a warm-up beside it
+	// would fetch the same video a second time for nobody.
+	if (activeVideoId === videoId) return;
 	if (warmStream && warmStream.videoId === videoId && warmStream.startAt === startAt) return;
 
 	dropWarmStream();
@@ -353,6 +395,12 @@ export function prewarmStream(videoId: string, startAt = 0): void {
 		size: 0,
 		startedAt: Date.now(),
 		ready: resolveStream(videoId).then(async stream => {
+			// Resolving took seconds, and in that time the page may have asked for
+			// this very video itself — then there is nothing left to warm up.
+			if (activeVideoId === videoId || warmStream !== warm) {
+				throw new Error('warm-up no longer needed');
+			}
+
 			const trimmed = await trimmedInputs(videoId, stream, startAt);
 			const proc = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt, trimmed ?? undefined));
 			warm.proc = proc;
@@ -383,7 +431,12 @@ export function prewarmStream(videoId: string, startAt = 0): void {
  */
 async function takeWarmStream(videoId: string, startAt: number): Promise<WarmStream | null> {
 	const warm = warmStream;
-	if (!warm || warm.videoId !== videoId || warm.startAt !== startAt) return null;
+	if (!warm) return null;
+
+	// A warm-up for this very video at another offset — the viewer seeked before
+	// it was claimed — will never be used, and would go on fetching regardless.
+	if (warm.videoId === videoId && warm.startAt !== startAt) { dropWarmStream(); return null; }
+	if (warm.videoId !== videoId || warm.startAt !== startAt) return null;
 	if (Date.now() - warm.startedAt > WARM_TTL_MS) { dropWarmStream(); return null; }
 
 	warmStream = null;
@@ -566,6 +619,9 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 	// and making the new start crawl. Closing the response usually stops it, but
 	// not always in time, so it is stopped here for certain.
 	stopActiveStream();
+	// Claimed before the first await: a warm-up waiting on the same lookup would
+	// otherwise finish first and start a second ffmpeg for the same video.
+	activeVideoId = videoId;
 
 	const warm = await takeWarmStream(videoId, startAt);
 	let ff: ReturnType<typeof runTool>;
@@ -599,6 +655,10 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 	}
 
 	activeStream = ff;
+	activeVideoId = videoId;
+	// Whatever else was fetching — a warm-up nobody claimed, a stream whose
+	// reference was lost — has no reader now.
+	killStrays(ff);
 
 	ff.stdout.pipe(res);
 	ff.on('error', () => res.end());
