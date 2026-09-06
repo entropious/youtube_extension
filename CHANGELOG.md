@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.9
+
+- Moving a video between the sidebar and an editor tab now carries the stream
+  along instead of starting it over: the picture appears in under two seconds,
+  on the same second it was on, and YouTube is not asked for anything. The
+  stream keeps its recent past so the view arriving gets the second the viewer
+  was watching, not the one the download had run ahead to.
+- A video's title, channel and chapters are remembered for half an hour, so
+  moving it between views no longer fetches and parses its watch page again.
+- A start that needs a second attempt is no longer announced as a failure.
+  Playback is retried quietly, and only a problem that outlives the retries is
+  worth the viewer's attention.
+
 ## 0.4.8
 
 - YouTube is asked far less often, which is what its bot checks count. A refused
