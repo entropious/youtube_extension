@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Release](https://img.shields.io/github/v/release/entropious/youtube_extension)](https://github.com/entropious/youtube_extension/releases/latest)
 
-![YouTube Player Screenshot](media/description.png)
+![YouTube Player Screenshot](media/description.jpg)
 
 Experience YouTube like never before, right from your editor! Watch tutorials, listen to music, or follow live streams without ever breaking your focus. 🚀
 
