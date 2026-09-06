@@ -3,13 +3,24 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { HistoryEntry, extractVideoId, extractPlaylistId, formatYoutubeUrl, parseEntries } from './utils';
 import * as claudeHooks from './claudeHooks';
-import { prefetchStream, prewarmStream } from './ytproxy';
+import { handoffStream, prefetchStream, prewarmStream } from './ytproxy';
+
+/** What a watch page tells us about a video, beyond how to play it. */
+type VideoDetails = {
+	title?: string;
+	authorUrl?: string;
+	authorName?: string;
+	authorThumbnail?: string;
+	chapters?: { title: string; time: number; thumbnail?: string }[];
+};
 
 export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	public static readonly viewType = 'youtube-panel.view';
 	/** Seconds of playback that mark a video as watched rather than passed over. */
 	public static readonly prefetchAfterSeconds = 20;
+	/** How long a video's title, channel and chapters are taken as current. */
+	public static readonly detailsTtlMs = 30 * 60 * 1000;
 	public static readonly historyKey = 'youtube-history';
 	public static readonly favoritesKey = 'youtube-favorites';
 	public static readonly timestampsKey = 'youtube-timestamps';
@@ -230,6 +241,10 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			startTime = this._getTimestamp(url);
 		}
 
+		// Only a move between views takes the stream along — that is what a target
+		// view means here. Choosing a video, or resuming one, starts it properly.
+		const handoff = targetView ? this._handoffFor(extractVideoId(url) || '') : null;
+
 		this._lastUrl = url;
 		this._lastTime = startTime;
 
@@ -244,11 +259,12 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 		// Resolving and fetching the first seconds is most of a start, and neither
 		// depends on the panel: both run while the player page is still loading.
-		prewarmStream(videoId, startTime);
+		// A stream being handed over needs none of it.
+		if (!handoff) prewarmStream(videoId, startTime);
 
 		this._syncPlaylistState(playlistId);
 		const canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
-		
+
 		const message = {
 			type: 'loadUrl',
 			value: formattedUrl,
@@ -259,7 +275,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 			playlistId: playlistId,
 			canPrev: canPrev,
 			authorUrl: this._currentChannelUrl,
-			authorName: this._currentChannelName
+			authorName: this._currentChannelName,
+			takeStream: handoff?.id,
+			takeOffset: handoff?.startAt
 		};
 		if (targetView === 'tab' && this._tabPanel) {
 			this._tabUrl = url;
@@ -534,7 +552,31 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private async _fetchVideoDetails(url: string): Promise<{ title?: string, authorUrl?: string, authorName?: string, authorThumbnail?: string, chapters?: {title: string, time: number, thumbnail?: string}[] } | undefined> {
+	/**
+	 * The title, channel and chapters of a video, kept once they are known.
+	 *
+	 * Reading them costs a fetch of the whole watch page and a walk through its
+	 * initial data, and every load asks for them — including a video merely moved
+	 * from the panel to a tab, which is the same video it was a moment ago. None
+	 * of it changes while a video is being watched.
+	 */
+	private _detailsCache = new Map<string, { details: VideoDetails | undefined; expires: number }>();
+
+	private async _fetchVideoDetails(url: string): Promise<VideoDetails | undefined> {
+		const known = this._detailsCache.get(url);
+		if (known && known.expires > Date.now()) return known.details;
+
+		const details = await this._readVideoDetails(url);
+		// A page that failed to answer is worth asking about again soon; one that
+		// did is not.
+		this._detailsCache.set(url, {
+			details,
+			expires: Date.now() + (details ? YouTubeViewProvider.detailsTtlMs : 30 * 1000)
+		});
+		return details;
+	}
+
+	private async _readVideoDetails(url: string): Promise<VideoDetails | undefined> {
 		try {
 			const res = await fetch(url, {
 				headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
@@ -1019,6 +1061,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	public _setupTabPanel(panel: vscode.WebviewPanel, url: string, title?: string, startTime?: number) {
 		this._tabPanel = panel;
+		// A video moved here is already playing in the panel, and the page this
+		// tab is about to load can take that stream over.
+		const handoff = this._handoffFor(extractVideoId(url) || '');
 		this._lastUrl = url;
 		this._lastTime = startTime ?? this._getTimestamp(url);
 		
@@ -1034,7 +1079,9 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._syncPlaylistState(playlistId);
 		const canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
 
-		panel.webview.html = this._getHtmlForWebview(this._formatYoutubeUrl(url, startTime, this._tabHasInteracted), url, { playlistId, playlistTitle: this._currentPlaylistTitle, canPrev });
+		const playerUrl = this._formatYoutubeUrl(url, startTime, this._tabHasInteracted) +
+			(handoff ? `&take=${encodeURIComponent(handoff.id)}&takeAt=${handoff.startAt}` : '');
+		panel.webview.html = this._getHtmlForWebview(playerUrl, url, { playlistId, playlistTitle: this._currentPlaylistTitle, canPrev });
 		this._setupWebviewHandlers(panel.webview, true);
 
 		panel.onDidDispose(() => {
@@ -1323,6 +1370,23 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	private _getAutoplay(): boolean {
 		return this._state.get<boolean>(YouTubeViewProvider.autoplayKey, true);
+	}
+
+	/**
+	 * The running stream, when the view being loaded can simply take it over.
+	 *
+	 * Moving a video between the panel and a tab used to start again from
+	 * nothing: resolve, fetch, decode, all for a video already playing a metre
+	 * away. The stream itself can change hands instead, which asks YouTube for
+	 * nothing.
+	 *
+	 * Where it resumes comes from the stream, not from the second either side
+	 * believes in — a view that has just been handed the video is asking to carry
+	 * on, and the two clocks drift apart often enough that comparing them refused
+	 * handovers that were perfectly good.
+	 */
+	private _handoffFor(videoId: string): { id: string; startAt: number } | null {
+		return videoId ? handoffStream(videoId) : null;
 	}
 
 	/**

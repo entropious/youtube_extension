@@ -133,9 +133,19 @@ function launcherFor(command: string): Launcher {
  */
 const running = new Set<ReturnType<typeof spawn>>();
 
-export function runTool(command: string, args: string[]) {
+/**
+ * Starts a tool. Only a stream is registered — `track` says so.
+ *
+ * The register is what "end every stream but this one" reads, so a lookup must
+ * stay out of it: a yt-dlp resolving one video was being killed by the ffmpeg
+ * of another starting beside it, and the page it was answering saw nothing but
+ * a tool that had died.
+ */
+export function runTool(command: string, args: string[], track = false) {
 	const launcher = launcherFor(command);
 	const proc = spawn(launcher.file, [...launcher.prefix, ...args]);
+
+	if (!track) return proc;
 
 	running.add(proc);
 	proc.on('close', () => running.delete(proc));
@@ -297,7 +307,11 @@ function runYtDlp(videoId: string): Promise<StreamInfo> {
 		proc.on('close', code => {
 			if (code !== 0) {
 				const details = Buffer.concat(err).toString('utf8').trim().replace(/^ERROR:\s*/i, '');
-				reject(new Error(details || `yt-dlp exited with code ${code}`));
+				const failure = new Error(details || `yt-dlp exited with code ${code}`);
+				// A lookup that was ended rather than answered says nothing about
+				// the video, so it must not be remembered as a refusal.
+				if (code === null) (failure as { ended?: boolean }).ended = true;
+				reject(failure);
 				return;
 			}
 
@@ -330,8 +344,10 @@ export async function resolveStream(videoId: string): Promise<StreamInfo> {
 		.catch((e: Error) => {
 			// A missing tool is not YouTube's doing, and is fixed while the setup
 			// screen is open — asking again the moment it is installed costs
-			// nothing and saves a wait.
-			if (!(e instanceof ToolMissingError)) {
+			// nothing and saves a wait. Neither is a lookup that was ended before
+			// it could answer.
+			const ours = e instanceof ToolMissingError || (e as { ended?: boolean }).ended;
+			if (!ours) {
 				failureCache.set(videoId, { error: e, expires: Date.now() + FAILURE_TTL_MS });
 			}
 			throw e;
@@ -362,15 +378,164 @@ const WARM_TTL_MS = 60 * 1000;
 
 let warmStream: WarmStream | null = null;
 
-/** The stream currently being served, kept so a new one can end it. */
-let activeStream: ReturnType<typeof runTool> | null = null;
+/**
+ * The stream currently being served.
+ *
+ * Kept whole rather than as a bare process because a stream outlives the page
+ * that asked for it: moving a video between the panel and a tab hands the same
+ * ffmpeg to the other view instead of starting a second one.
+ */
+type ActiveStream = {
+	id: string;
+	videoId: string;
+	proc: ReturnType<typeof runTool>;
+	/** The second of the video the pipe's first frame stands at. */
+	startAt: number;
+	/**
+	 * The fragmented-MP4 header — `ftyp` and `moov`, everything before the first
+	 * fragment. A player joining midway cannot decode a single fragment without
+	 * it, so it is kept for as long as the stream runs.
+	 */
+	head: Buffer;
+	/** Whether the header is complete; fragments have begun by then. */
+	headDone: boolean;
+	/** Where the bytes go now, which a handover replaces. */
+	res: http.ServerResponse | null;
+	/** Until when the stream is kept for a view that was promised it. */
+	reservedUntil: number;
+};
+
+/**
+ * How long a stream outlives the response it was feeding.
+ *
+ * Losing the reader is not the same as being finished with: pausing a video is
+ * enough for the browser to drop the connection, and a move to another view
+ * takes a moment to ask for the stream again. A held stream costs nothing — with
+ * nobody reading, ffmpeg blocks on its pipe — while ending it would mean
+ * resolving, fetching and decoding the same video over.
+ */
+const HOLD_MS = 15 * 1000;
+
+let active: ActiveStream | null = null;
 let activeVideoId: string | null = null;
+let nextStreamId = 0;
 
 function stopActiveStream() {
 	activeVideoId = null;
-	if (!activeStream) return;
-	activeStream.kill('SIGKILL');
-	activeStream = null;
+	if (!active) return;
+	active.proc.kill('SIGKILL');
+	active.res?.end();
+	active = null;
+}
+
+/**
+ * Everything a view needs to pick up the running stream where the other left it.
+ *
+ * Offered only for the video actually being served: for anything else the page
+ * asks by video id as usual, and the stream starts from scratch.
+ */
+export function handoffStream(videoId: string): { id: string; startAt: number } | null {
+	if (!active || active.videoId !== videoId || active.proc.killed) return null;
+
+	// Offering it also holds it: the view being left goes quiet a moment later —
+	// pausing a video is enough for the browser to drop the connection — and the
+	// stream must outlive that, or the view arriving finds nothing to take.
+	active.reservedUntil = Date.now() + HOLD_MS;
+	return { id: active.id, startAt: active.startAt };
+}
+
+/** What the server is streaming right now, for the probe harness to read. */
+export function streamReport(): Record<string, unknown> {
+	return {
+		active: active && {
+			id: active.id,
+			videoId: active.videoId,
+			startAt: active.startAt,
+			headBytes: active.head.length,
+			headDone: active.headDone,
+			hasReader: Boolean(active.res),
+			killed: active.proc.killed,
+			reservedFor: Math.max(0, active.reservedUntil - Date.now())
+		},
+		warm: warmStream && { videoId: warmStream.videoId, startAt: warmStream.startAt, buffered: warmStream.size },
+		cached: [...streamCache.keys()],
+		failed: [...failureCache.keys()]
+	};
+}
+
+/**
+ * Hands the running stream to another player.
+ *
+ * The pipe simply changes where it writes: the header goes out first, then the
+ * fragments as they arrive, so the video carries on from the second it had
+ * reached without resolving, fetching or decoding anything again. The view that
+ * had it gets the end of its response and stops.
+ */
+export function takeOverStream(res: http.ServerResponse, id: string): boolean {
+	if (!active || active.id !== id || active.proc.killed || !active.headDone) return false;
+
+	const previous = active.res;
+	active.res = null;
+	previous?.end();
+
+	res.writeHead(200, {
+		'Content-Type': 'video/mp4',
+		'Access-Control-Allow-Origin': '*',
+		'Cache-Control': 'no-cache'
+	});
+	res.write(active.head);
+	active.res = res;
+	// The pipe may have been held back by the view that is leaving, whose drain
+	// will never come now; the new one is ready for it.
+	active.proc.stdout.resume();
+	attachReader(active, res);
+	return true;
+}
+
+/** Ends the stream when the page that holds it goes away for good. */
+function attachReader(stream: ActiveStream, res: http.ServerResponse): void {
+	res.on('close', () => {
+		// A handover has already moved on; this is the old response closing.
+		if (active !== stream || stream.res !== res) return;
+
+		// Held for whoever comes back for it — the same page after a pause, or
+		// another view being handed the video. The pipe stops meanwhile, so the
+		// seconds in flight are waiting rather than thrown away.
+		const hold = Math.max(HOLD_MS, stream.reservedUntil - Date.now());
+		stream.res = null;
+		stream.proc.stdout.pause();
+		setTimeout(() => {
+			if (active !== stream || stream.res) return;
+			stream.proc.kill('SIGKILL');
+			if (active === stream) active = null;
+		}, hold).unref?.();
+	});
+}
+
+/**
+ * Collects the fragmented-MP4 header as it goes past.
+ *
+ * The top-level boxes arrive as a length and a name, and everything up to the
+ * first `moof` is what a player needs before any fragment makes sense.
+ */
+function collectHead(stream: ActiveStream, chunk: Buffer): void {
+	if (stream.headDone) return;
+
+	stream.head = stream.head.length ? Buffer.concat([stream.head, chunk]) : Buffer.from(chunk);
+
+	let at = 0;
+	while (at + 8 <= stream.head.length) {
+		const size = stream.head.readUInt32BE(at);
+		const type = stream.head.toString('latin1', at + 4, at + 8);
+		if (type === 'moof') {
+			stream.head = stream.head.subarray(0, at);
+			stream.headDone = true;
+			return;
+		}
+		// A box of no length is the last one, and never the header.
+		if (size < 8) return;
+		at += size;
+	}
 }
 
 /**
@@ -427,7 +592,7 @@ export function prewarmStream(videoId: string, startAt = 0): void {
 			}
 
 			const trimmed = await trimmedInputs(videoId, stream, startAt);
-			const proc = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt, trimmed ?? undefined));
+			const proc = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt, trimmed ?? undefined), true);
 			warm.proc = proc;
 
 			proc.stdout.on('data', (chunk: Buffer) => {
@@ -666,7 +831,7 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 		}
 
 		const trimmed = await trimmedInputs(videoId, stream, startAt);
-		ff = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt, trimmed ?? undefined));
+		ff = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt, trimmed ?? undefined), true);
 	}
 
 	res.writeHead(200, {
@@ -675,27 +840,50 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 		'Cache-Control': 'no-cache'
 	});
 
+	const stream: ActiveStream = {
+		id: `s${++nextStreamId}`,
+		videoId,
+		proc: ff,
+		startAt,
+		head: Buffer.alloc(0),
+		headDone: false,
+		res,
+		reservedUntil: 0
+	};
+
 	// Whatever the warm-up already fetched goes out first, then the live pipe.
 	if (warm?.buffered.length) {
-		res.write(Buffer.concat(warm.buffered));
+		const buffered = Buffer.concat(warm.buffered);
+		collectHead(stream, buffered);
+		res.write(buffered);
 		ff.stdout.resume();
 	}
 
-	activeStream = ff;
+	active = stream;
 	activeVideoId = videoId;
 	// Whatever else was fetching — a warm-up nobody claimed, a stream whose
 	// reference was lost — has no reader now.
 	killStrays(ff);
 
-	ff.stdout.pipe(res);
-	ff.on('error', () => res.end());
+	// Written by hand rather than piped: a handover changes where the bytes go
+	// halfway through, and a pipe is bound to the one response it was made with.
+	ff.stdout.on('data', (chunk: Buffer) => {
+		collectHead(stream, chunk);
+		if (stream.res?.write(chunk) === false) {
+			ff.stdout.pause();
+			stream.res.once('drain', () => ff.stdout.resume());
+		}
+	});
+
+	ff.on('error', () => stream.res?.end());
 	// A signed URL that has expired makes ffmpeg fail immediately; the next
 	// request then resolves the video again instead of replaying the dead link.
 	ff.on('close', code => {
-		if (activeStream === ff) activeStream = null;
+		stream.res?.end();
+		if (active === stream) active = null;
 		if (code !== 0) invalidateStream(videoId);
 	});
-	res.on('close', () => ff.kill('SIGKILL'));
+	attachReader(stream, res);
 }
 
 /** Playlists served from here, already cut to where playback begins. */
@@ -853,14 +1041,17 @@ export function handlePlayerPage(
 	res: http.ServerResponse,
 	videoId: string,
 	startTime: number,
-	autoplay: boolean
+	autoplay: boolean,
+	// A page opened for a video already playing elsewhere — a move to a tab of
+	// its own — is told which stream to take over instead of starting a second.
+	take: { id: string; startAt: number } | null = null
 ): void {
 	res.writeHead(200, {
 		'Content-Type': 'text/html; charset=utf-8',
 		'Cache-Control': 'no-cache',
 		'Access-Control-Allow-Origin': '*'
 	});
-	res.end(playerPageHtml(videoId, startTime, autoplay));
+	res.end(playerPageHtml(videoId, startTime, autoplay, take));
 }
 
 /** Reports tool availability; the panel blocks on this until both are present. */
@@ -946,7 +1137,12 @@ export function installRecipes(ytDlpStatus: ToolStatus, ffmpegStatus: ToolStatus
 	];
 }
 
-function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): string {
+function playerPageHtml(
+	videoId: string,
+	startTime: number,
+	autoplay: boolean,
+	take: { id: string; startAt: number } | null = null
+): string {
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1095,6 +1291,10 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	// must not have the surrounding UI record progress for a video that never
 	// started.
 	var playing = false;
+	// The stream taken over from the other view, and where a start of our own
+	// would have begun, in case that stream turns out to be gone.
+	var takenOver = '';
+	var pendingAt = 0;
 	// Recovery attempts since the last time playback actually ran.
 	var retries = 0;
 	var MAX_RETRIES = 3;
@@ -1207,8 +1407,10 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		playBtn.textContent = video.paused ? '▶' : '❚❚';
 	}
 
-	function mediaUrl(id, at) {
-		return '/media?v=' + encodeURIComponent(id) + (at > 0 ? '&t=' + Math.floor(at) : '');
+	function mediaUrl(id, at, take) {
+		return '/media?v=' + encodeURIComponent(id) +
+			(at > 0 ? '&t=' + Math.floor(at) : '') +
+			(take ? '&take=' + encodeURIComponent(take) : '');
 	}
 
 	function stopStream() {
@@ -1218,18 +1420,90 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		video.load();
 	}
 
-	function startStream(at, autoplay) {
-		offset = Math.max(0, at || 0);
+	/**
+	 * Starts playback at a second of the video, or picks up a running stream.
+	 *
+	 * A taken-over stream begins where the other view had reached, so its own
+	 * offset comes with it. The requested second is kept all the same: it is
+	 * where a start of our own begins if that stream turns out to be gone.
+	 */
+	function startStream(at, autoplay, take, takeOffset) {
+		offset = Math.max(0, (take ? takeOffset : at) || 0);
 		playing = true;
 		wasPlaying = Boolean(autoplay);
+		takenOver = take || '';
+		// Kept for the stream that was gone by the time it was asked for.
+		pendingAt = Math.max(0, at || 0);
 		// Whatever went wrong before is being retried right now; the old notice
 		// must not sit over a picture that plays again.
 		showMessage('');
 		showSpinner(true);
-		video.src = mediaUrl(videoId, offset);
+		video.src = mediaUrl(videoId, at, take);
 		video.load();
+		if (take) { joinBuffer(); guardHandover(take); }
 		if (autoplay) play();
 		paint();
+	}
+
+	/**
+	 * Falls back to a stream of our own when a taken-over one never plays.
+	 *
+	 * A handover that fails outright raises an error and is dealt with there.
+	 * This covers the quieter way it can go wrong — bytes arrive that the video
+	 * element makes nothing of — which would otherwise leave the spinner turning
+	 * for good.
+	 */
+	function guardHandover(take) {
+		setTimeout(function() {
+			if (takenOver !== take || video.readyState >= 3) return;
+			logError('Taken-over stream never started playing, starting one of our own');
+			startStream(pendingAt, wasPlaying);
+		}, 6000);
+	}
+
+	/**
+	 * Moves to where a taken-over stream actually begins.
+	 *
+	 * Its fragments keep the timestamps of the stream they belong to, so one
+	 * handed over after ten minutes of playback arrives stamped ten minutes in,
+	 * while a fresh video element sits at zero and waits for data that will never
+	 * come. Landing on the first buffered second is what turns that wait into a
+	 * picture; nothing else in the page has to know, since a stream's own offset
+	 * is already what the clock is counted from.
+	 */
+	function joinBuffer() {
+		var attempts = 0;
+		var events = ['loadedmetadata', 'loadeddata', 'progress', 'canplay'];
+
+		function tryJoin() {
+			if (!takenOver) { stop(); return; }
+			try {
+				if (video.buffered.length) {
+					var joinAt = video.buffered.start(0);
+					// A stream fetches ahead of whoever is watching it, and while a
+					// video sits paused it runs on without them. Landing where it
+					// has got to would jump the picture forward, so a stream that
+					// has left the viewer behind is let go and this view fetches
+					// the second it actually wants.
+					if (Math.abs(offset + joinAt - pendingAt) > 3) {
+						stop();
+						startStream(pendingAt, wasPlaying);
+						return;
+					}
+					if (video.currentTime < joinAt) video.currentTime = joinAt;
+					stop();
+					return;
+				}
+			} catch (e) { /* buffered is not readable yet */ }
+			// Nothing to join yet; the next event will bring it.
+			if (++attempts > 40) stop();
+		}
+
+		function stop() {
+			for (var i = 0; i < events.length; i++) video.removeEventListener(events[i], tryJoin);
+		}
+
+		for (var i = 0; i < events.length; i++) video.addEventListener(events[i], tryJoin);
 	}
 
 	function loadInfo(id) {
@@ -1247,7 +1521,7 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 			});
 	}
 
-	function load(id, startAt, autoplay) {
+	function load(id, startAt, autoplay, take, takeOffset) {
 		videoId = id;
 		duration = 0;
 		lastState = -1;
@@ -1262,7 +1536,7 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		// both wait on the same lookup server-side, so starting them together
 		// takes a whole round of it off the start. Only the duration — the seek
 		// bar and the time label — has to wait for the answer.
-		startStream(startAt, autoplay);
+		startStream(startAt, autoplay, take, takeOffset);
 
 		loadInfo(id).then(function(info) {
 			if (videoId !== id) return;
@@ -1423,14 +1697,24 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 		var err = video.error;
 		var code = err ? err.code : 0;
 
+		// The other view's stream ended in the moment between being offered and
+		// being asked for; this one starts where that view stood instead.
+		if (takenOver) {
+			logError('Stream handover missed, starting one of our own', code);
+			startStream(pendingAt, wasPlaying);
+			return;
+		}
+
 		// A stream that dies mid-playback — the encode ended, the link expired,
-		// what arrived no longer decodes — is fixed the same way: ask the server
-		// for it again from where playback stood. Retries are capped so a video
-		// that truly cannot play stops rather than loops.
-		if ((code === 2 || code === 3) && retries < MAX_RETRIES) {
+		// what arrived no longer decodes, the source was refused outright — is
+		// fixed the same way: ask the server for it again from where playback
+		// stood. Retries are capped so a video that truly cannot play stops
+		// rather than loops, and nothing is said until they run out: a start that
+		// takes a second attempt is a start, not a failure worth reading about.
+		if (code && retries < MAX_RETRIES) {
 			retries++;
 			logError('Media element error, retrying', code);
-			startStream(position(), !video.paused || wasPlaying);
+			startStream(position() || pendingAt, !video.paused || wasPlaying);
 			return;
 		}
 
@@ -1455,7 +1739,13 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 			var nextId = data.id;
 			var at = data.startTime || 0;
 			var autoplay = data.autoplay !== false;
-			if (nextId && nextId !== videoId) load(nextId, at, autoplay);
+			// A video moved here from the other view brings its running stream
+			// along, which is quicker than starting one and has the sound already
+			// decoded up to where it stood.
+			var take = data.takeStream;
+			var takeAt = data.takeOffset || 0;
+			if (nextId && nextId !== videoId) load(nextId, at, autoplay, take, takeAt);
+			else if (take) startStream(at, autoplay, take, takeAt);
 			else if (Math.abs(at - position()) > 1) startStream(at, autoplay);
 			else if (autoplay) play(); else video.pause();
 			return;
@@ -1475,7 +1765,7 @@ function playerPageHtml(videoId: string, startTime: number, autoplay: boolean): 
 	});
 
 	reportBarHeight();
-	load(videoId, ${Math.max(0, Math.floor(startTime))}, ${autoplay ? 'true' : 'false'});
+	load(videoId, ${Math.max(0, Math.floor(startTime))}, ${autoplay ? 'true' : 'false'}, ${JSON.stringify(take?.id ?? '')}, ${take?.startAt ?? 0});
 })();
 </script>
 </body>
