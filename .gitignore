@@ -6,6 +6,9 @@ out/
 .env
 test/*.js
 test/*.js.map
-.probe
+# Scratch, except the harness that drives the Extension Development Host.
+.probe/*
+!.probe/devhost.sh
+!.probe/devhost-check.js
 .playwright-mcp
 .claude
