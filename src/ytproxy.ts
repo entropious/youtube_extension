@@ -444,7 +444,8 @@ export function prewarmStream(videoId: string, startAt = 0): void {
 
 	warmStream = warm;
 	// A video nobody opens must not keep a process and its buffer alive.
-	setTimeout(() => { if (warmStream === warm) dropWarmStream(); }, WARM_TTL_MS);
+	// Unreferenced: a warm-up nobody claimed must not be a reason to stay alive.
+	setTimeout(() => { if (warmStream === warm) dropWarmStream(); }, WARM_TTL_MS).unref?.();
 	warm.ready.catch(() => { if (warmStream === warm) warmStream = null; });
 }
 
