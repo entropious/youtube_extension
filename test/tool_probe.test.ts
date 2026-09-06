@@ -165,12 +165,42 @@ describe('Tool probing and stream cache', () => {
             }
         });
 
-        it('does not cache a failed lookup', async () => {
-            spawn.onFirstCall().callsFake(() => fakeProcess({ stderr: 'ERROR: temporary\n', code: 1 }));
+        it('repeats a refusal instead of asking YouTube again straight away', async () => {
+            spawn.onFirstCall().callsFake(() => fakeProcess({ stderr: 'ERROR: sign in to confirm\n', code: 1 }));
             spawn.onSecondCall().callsFake(() => fakeProcess({ stdout: videoJson }));
 
             await resolveStream('ddddddddddd').catch(() => undefined);
-            const info = await resolveStream('ddddddddddd');
+            const again = await resolveStream('ddddddddddd').catch((e: Error) => e);
+
+            // The page asks for the video and its details at once and retries a
+            // broken stream, and every one of those runs feeds the bot check.
+            expect(spawn.callCount).to.equal(1);
+            expect((again as Error).message).to.equal('sign in to confirm');
+        });
+
+        it('tries a refused video again once the failure has aged out', async () => {
+            const clock = sinon.useFakeTimers({ now: Date.now(), toFake: ['Date'] });
+            try {
+                spawn.onFirstCall().callsFake(() => fakeProcess({ stderr: 'ERROR: temporary\n', code: 1 }));
+                spawn.onSecondCall().callsFake(() => fakeProcess({ stdout: videoJson }));
+
+                await resolveStream('dddddddddde').catch(() => undefined);
+                clock.tick(16 * 1000);
+                const info = await resolveStream('dddddddddde');
+
+                expect(spawn.callCount).to.equal(2);
+                expect(info.title).to.equal('Test video');
+            } finally {
+                clock.restore();
+            }
+        });
+
+        it('asks again as soon as a missing tool is installed', async () => {
+            spawn.onFirstCall().callsFake(() => fakeProcess({ error: Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }) }));
+            spawn.onSecondCall().callsFake(() => fakeProcess({ stdout: videoJson }));
+
+            await resolveStream('ddddddddddf').catch(() => undefined);
+            const info = await resolveStream('ddddddddddf');
 
             expect(spawn.callCount).to.equal(2);
             expect(info.title).to.equal('Test video');
