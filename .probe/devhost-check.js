@@ -95,8 +95,19 @@ function dispatchClick(wsUrl, x, y) {
 	});
 }
 
+/**
+ * Проверка идёт на настоящем видео, и слушать его никто не просил: звук
+ * снимается на каждой странице плеера перед любым действием над ней.
+ */
+const MUTE = `(() => {
+	const v = document.querySelector('video');
+	if (v) { v.muted = true; v.volume = 0; }
+	return true;
+})()`;
+
 async function run(expression) {
 	const target = await playerTarget();
+	await evaluate(target.webSocketDebuggerUrl, MUTE).catch(() => undefined);
 	return evaluate(target.webSocketDebuggerUrl, expression);
 }
 
@@ -189,6 +200,7 @@ const commands = {
 		const list = (await targets()).filter(t => (t.url || '').includes(PLAYER_URL) && t.webSocketDebuggerUrl);
 		const states = [];
 		for (const target of list) {
+			await evaluate(target.webSocketDebuggerUrl, MUTE).catch(() => undefined);
 			states.push({
 				url: target.url.replace(/^https?:\/\/127\.0\.0\.1:\d+/, ''),
 				...(await evaluate(target.webSocketDebuggerUrl, STATE))

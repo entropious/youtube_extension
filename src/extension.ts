@@ -76,7 +76,10 @@ async function startProxyServer(): Promise<void> {
 			// by where that stream stood, and only it knows what to ask for instead.
 			const take = url.searchParams.get('take');
 			if (take) {
-				if (!takeOverStream(res, take)) { res.writeHead(409); res.end('Stream is gone'); }
+				// `t` is the second the viewer is on, which is what the stream has to
+				// replay from — its live end is far ahead of that by now.
+				const at = parseInt(url.searchParams.get('t') ?? '0', 10);
+				if (!takeOverStream(res, take, at)) { res.writeHead(409); res.end('Stream is gone'); }
 				return;
 			}
 

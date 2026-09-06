@@ -56,6 +56,38 @@ function box(type: string, size: number) {
     return buffer;
 }
 
+/** Wraps `children` in a box of `type`. */
+function container(type: string, ...children: Buffer[]) {
+    const body = Buffer.concat(children);
+    const header = Buffer.alloc(8);
+    header.writeUInt32BE(body.length + 8, 0);
+    header.write(type, 4, 'latin1');
+    return Buffer.concat([header, body]);
+}
+
+const TIMESCALE = 1000;
+
+/** A moov whose first track counts a thousand ticks a second. */
+function moov() {
+    const mdhd = Buffer.alloc(32);
+    mdhd.writeUInt32BE(32, 0);
+    mdhd.write('mdhd', 4, 'latin1');
+    mdhd.writeUInt32BE(TIMESCALE, 20);
+    return container('moov', container('trak', container('mdia', mdhd)));
+}
+
+/** A fragment beginning at `seconds`, with `payload` bytes of media after it. */
+function fragment(seconds: number, payload = 32) {
+    const tfdt = Buffer.alloc(16);
+    tfdt.writeUInt32BE(16, 0);
+    tfdt.write('tfdt', 4, 'latin1');
+    tfdt.writeUInt32BE(Math.round(seconds * TIMESCALE), 12);
+    return Buffer.concat([container('moof', container('traf', tfdt)), box('mdat', payload)]);
+}
+
+const HEAD = Buffer.concat([box('ftyp', 24), moov()]).length;
+const FRAGMENT = fragment(0).length;
+
 const settle = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms));
 
 describe('Moving a stream between views', () => {
@@ -78,13 +110,19 @@ describe('Moving a stream between views', () => {
         sinon.restore();
     });
 
-    /** Serves a video from `at`, and plays enough of it to pass the header. */
-    async function playing(at = 0) {
+    /**
+     * Serves a video from `at`, then plays `seconds` of it.
+     *
+     * The stream runs ahead of any viewer, so it is played out fragment by
+     * fragment: what a handover has to find is the second that was on screen,
+     * not the one the pipe has reached.
+     */
+    async function playing(at = 0, seconds = 1) {
         const res = fakeResponse();
         await handleMedia(res, videoId, at);
         const ff = ffmpegs[ffmpegs.length - 1];
-        ff.stdout.write(Buffer.concat([box('ftyp', 24), box('moov', 40)]));
-        ff.stdout.write(box('moof', 16));
+        ff.stdout.write(Buffer.concat([box('ftyp', 24), moov()]));
+        for (let second = 0; second < seconds; second++) ff.stdout.write(fragment(second));
         await settle();
         return { res, ff };
     }
@@ -117,10 +155,40 @@ describe('Moving a stream between views', () => {
         const second = fakeResponse();
         takeOverStream(second, handoffStream(videoId)!.id);
 
-        // ftyp and moov, and nothing of the fragment that had already gone out.
-        const head = second.body();
-        expect(head.toString('latin1', 4, 8)).to.equal('ftyp');
-        expect(head.length).to.equal(64);
+        const body = second.body();
+        expect(body.toString('latin1', 4, 8)).to.equal('ftyp');
+        expect(body.length).to.equal(HEAD + FRAGMENT);
+    });
+
+    it('replays from the second the viewer was on, not the one the pipe reached', async () => {
+        // Ten seconds fetched while the picture is still at the third.
+        await playing(0, 10);
+
+        const second = fakeResponse();
+        expect(takeOverStream(second, handoffStream(videoId)!.id, 3)).to.equal(true);
+
+        // The header, then the third second onwards — seven fragments, not ten.
+        expect(second.body().length).to.equal(HEAD + FRAGMENT * 7);
+    });
+
+    it('counts the wanted second from the start of the video, not of the stream', async () => {
+        // A stream that itself began at 0:30, playing its first ten seconds.
+        await playing(30, 10);
+
+        const second = fakeResponse();
+        expect(takeOverStream(second, handoffStream(videoId)!.id, 34)).to.equal(true);
+
+        expect(second.body().length).to.equal(HEAD + FRAGMENT * 6);
+    });
+
+    it('refuses a second the stream never held, rather than jumping the picture', async () => {
+        // A stream of the last ten seconds of a long video.
+        await playing(600, 10);
+
+        // Before it begins: this view is watching something the stream never
+        // fetched, and would be thrown minutes forward by taking it.
+        expect(takeOverStream(fakeResponse(), handoffStream(videoId)!.id, 120)).to.equal(false);
+        expect(takeOverStream(fakeResponse(), handoffStream(videoId)!.id, 604)).to.equal(true);
     });
 
     it('carries on into the new view, and leaves the old one ended', async () => {
@@ -129,12 +197,12 @@ describe('Moving a stream between views', () => {
         takeOverStream(second, handoffStream(videoId)!.id);
         const before = first.res.chunks.length;
 
-        first.ff.stdout.write(box('moof', 32));
+        first.ff.stdout.write(fragment(1));
         await settle();
 
         expect(first.res.ended).to.equal(true);
         expect(first.res.chunks).to.have.length(before);
-        expect(second.body().length).to.equal(64 + 32);
+        expect(second.body().length).to.equal(HEAD + FRAGMENT * 2);
     });
 
     it('keeps the stream alive when the view that had it closes', async () => {
@@ -162,10 +230,10 @@ describe('Moving a stream between views', () => {
 
         const second = fakeResponse();
         expect(takeOverStream(second, offer.id)).to.equal(true);
-        first.ff.stdout.write(box('moof', 40));
+        first.ff.stdout.write(fragment(1));
         await settle();
 
-        expect(second.body().length).to.equal(64 + 40);
+        expect(second.body().length).to.equal(HEAD + FRAGMENT * 2);
     });
 
     it('ends a stream nobody comes for', async () => {
@@ -188,18 +256,18 @@ describe('Moving a stream between views', () => {
         const first = await playing(0);
         // The old response stops taking bytes, which pauses the pipe.
         first.res.write = () => false;
-        first.ff.stdout.write(box('moof', 32));
+        first.ff.stdout.write(fragment(1));
         await settle();
         expect(first.ff.stdout.isPaused()).to.equal(true);
 
         const second = fakeResponse();
         takeOverStream(second, handoffStream(videoId)!.id);
-        first.ff.stdout.write(box('moof', 48));
+        first.ff.stdout.write(fragment(2));
         await settle();
 
         // The drain of the old response is never coming, so nothing else can
         // restart the pipe.
-        expect(second.body().length).to.equal(64 + 48);
+        expect(second.body().length).to.equal(HEAD + FRAGMENT * 3);
     });
 
     it('refuses a stream that is gone, so the view starts one of its own', async () => {
