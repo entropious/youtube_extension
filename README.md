@@ -5,7 +5,7 @@
 
 ![YouTube Player Screenshot](media/description.jpg)
 
-Experience YouTube like never before, right from your editor! Watch tutorials, listen to music, or follow live streams without ever breaking your focus. 🚀
+Watch YouTube videos inside VS Code — in the sidebar or in a full editor tab. Search YouTube, open playlists, follow tutorials, listen to music or keep a live stream running, without ever leaving the editor. 🚀
 
 ## ✨ Features
 
