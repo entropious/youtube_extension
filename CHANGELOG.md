@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.7
+
+- When YouTube refuses a video to an anonymous session, the notice now names the
+  command that updates yt-dlp and offers a button that copies it. Which command
+  it is depends on how yt-dlp was installed — Homebrew, pipx, pip, scoop,
+  chocolatey, winget, or a standalone binary that updates itself.
+- The extension icon has rounded corners, and the marketplace listing carries
+  keywords.
+
 ## 0.4.6
 
 - Stray ffmpeg processes no longer drain the battery. One was left running when
