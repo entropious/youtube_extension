@@ -8,6 +8,8 @@ import { prefetchStream, prewarmStream } from './ytproxy';
 export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	public static readonly viewType = 'youtube-panel.view';
+	/** Seconds of playback that mark a video as watched rather than passed over. */
+	public static readonly prefetchAfterSeconds = 20;
 	public static readonly historyKey = 'youtube-history';
 	public static readonly favoritesKey = 'youtube-favorites';
 	public static readonly timestampsKey = 'youtube-timestamps';
@@ -28,6 +30,8 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 	private _lastTime = 0;
 	private _timestampCache: Record<string, number> = {};
 	private _currentPlaylist: string[] = [];
+	/** The video whose successor has already been resolved ahead of time. */
+	private _prefetchedAfter?: string;
 	private _playlistTitles: Record<string, string> = {};
 	private _playlistId?: string;
 	private _currentChannelUrl?: string;
@@ -242,13 +246,6 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		// depends on the panel: both run while the player page is still loading.
 		prewarmStream(videoId, startTime);
 
-		// The next video in a playlist is resolved while this one plays, so
-		// skipping ahead does not pay for the lookup again.
-		if (playlistId && videoId) {
-			const next = this._currentPlaylist[this._currentPlaylist.indexOf(videoId) + 1];
-			if (next) prefetchStream(next);
-		}
-		
 		this._syncPlaylistState(playlistId);
 		const canPrev = !!(playlistId && this._currentPlaylist.length > 0 && this._currentPlaylist.indexOf(videoId) > 0);
 		
@@ -1188,6 +1185,7 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 						const vid = this._extractVideoId(this._lastUrl || '');
 						if (vid) this._timestampCache[vid] = data.time;
 					}
+					this._prefetchNext(data.time);
 					break;
 				}
 				case 'saveTimestamp':
@@ -1325,6 +1323,30 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 
 	private _getAutoplay(): boolean {
 		return this._state.get<boolean>(YouTubeViewProvider.autoplayKey, true);
+	}
+
+	/**
+	 * Resolves the video after this one, once this one is really being watched.
+	 *
+	 * The lookup is the slow half of a start, so having it behind us is what
+	 * makes skipping ahead instant. Starting it the moment a video is chosen,
+	 * however, spends a yt-dlp run on every video passed over while browsing a
+	 * playlist — requests nobody waits for, and which YouTube counts towards the
+	 * bot checks that end in a refused video. Someone still here after this many
+	 * seconds is watching, and stands a fair chance of playing what comes next.
+	 */
+	private _prefetchNext(time: number): void {
+		if (typeof time !== 'number' || time < YouTubeViewProvider.prefetchAfterSeconds) return;
+
+		const videoId = this._extractVideoId(this._lastUrl || '');
+		if (!videoId || this._prefetchedAfter === videoId) return;
+		if (!this._playlistId || !this._currentPlaylist.length) return;
+
+		const next = this._currentPlaylist[this._currentPlaylist.indexOf(videoId) + 1];
+		if (!next) return;
+
+		this._prefetchedAfter = videoId;
+		prefetchStream(next);
 	}
 
 	private _syncPlaylistState(playlistId: string | undefined) {

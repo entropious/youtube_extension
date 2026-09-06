@@ -35,6 +35,7 @@ let tools: ToolConfig = {
 export function setToolConfig(config: Partial<ToolConfig>): void {
 	tools = { ...tools, ...config };
 	streamCache.clear();
+	failureCache.clear();
 	// A lookup already in flight used the previous paths and format, so it must
 	// not be handed to anyone who asks after the change.
 	pending.clear();
@@ -67,7 +68,19 @@ export type StreamInfo = {
 // before that so a stale link never reaches the player.
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
+/**
+ * How long a refusal is remembered.
+ *
+ * A page asks for the video and its details at once, and retries a stream that
+ * breaks up to three times, so one refused video can mean several yt-dlp runs
+ * within seconds — the very pattern YouTube's bot checks look for. The failure
+ * answers everyone who asks inside this window; a few seconds later the same
+ * video is tried again for real.
+ */
+const FAILURE_TTL_MS = 15 * 1000;
+
 const streamCache = new Map<string, { info: StreamInfo; expires: number }>();
+const failureCache = new Map<string, { error: Error; expires: number }>();
 const pending = new Map<string, Promise<StreamInfo>>();
 
 export class ToolMissingError extends Error {
@@ -302,6 +315,9 @@ export async function resolveStream(videoId: string): Promise<StreamInfo> {
 	const cached = streamCache.get(videoId);
 	if (cached && cached.expires > Date.now()) return cached.info;
 
+	const failed = failureCache.get(videoId);
+	if (failed && failed.expires > Date.now()) throw failed.error;
+
 	// Loading a page fires /info and /media at once; both wait on one lookup.
 	const inFlight = pending.get(videoId);
 	if (inFlight) return inFlight;
@@ -310,6 +326,15 @@ export async function resolveStream(videoId: string): Promise<StreamInfo> {
 		.then(info => {
 			streamCache.set(videoId, { info, expires: Date.now() + CACHE_TTL_MS });
 			return info;
+		})
+		.catch((e: Error) => {
+			// A missing tool is not YouTube's doing, and is fixed while the setup
+			// screen is open — asking again the moment it is installed costs
+			// nothing and saves a wait.
+			if (!(e instanceof ToolMissingError)) {
+				failureCache.set(videoId, { error: e, expires: Date.now() + FAILURE_TTL_MS });
+			}
+			throw e;
 		})
 		.finally(() => pending.delete(videoId));
 
@@ -589,6 +614,7 @@ export function prefetchStream(videoId: string): void {
 /** Drops a cached stream so the next request resolves it again. */
 export function invalidateStream(videoId: string): void {
 	streamCache.delete(videoId);
+	failureCache.delete(videoId);
 }
 
 function headerArgs(headers: Record<string, string>): string[] {

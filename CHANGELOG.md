@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.8
+
+- YouTube is asked far less often, which is what its bot checks count. A refused
+  video is remembered for fifteen seconds instead of being asked about again by
+  every part of a start — the page requests the video and its details at once,
+  and retries a broken stream up to three times, so one refusal used to mean
+  several lookups within seconds.
+- The next video in a playlist is now resolved once the current one has really
+  been watched, rather than the moment it is chosen: browsing a playlist no
+  longer spends a lookup on every video passed over.
+
 ## 0.4.7
 
 - When YouTube refuses a video to an anonymous session, the notice now names the
