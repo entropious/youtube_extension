@@ -399,11 +399,29 @@ type ActiveStream = {
 	head: Buffer;
 	/** Whether the header is complete; fragments have begun by then. */
 	headDone: boolean;
+	/** Ticks per second of the first track, which dates every fragment. */
+	timescale: number;
+	/** The recent past of the stream, newest last. */
+	frags: { data: Buffer; at: number }[];
+	fragBytes: number;
+	/** Bytes of the pipe not yet parsed into whole boxes. */
+	pending: Buffer;
 	/** Where the bytes go now, which a handover replaces. */
 	res: http.ServerResponse | null;
 	/** Until when the stream is kept for a view that was promised it. */
 	reservedUntil: number;
 };
+
+/**
+ * How much of a stream's past is kept for a view that may ask for it.
+ *
+ * ffmpeg fetches as fast as the connection allows and the browser buffers what
+ * it gets, so the stream's "now" is half a minute ahead of the picture on
+ * screen. Handing over the live end would jump the video forward, so what has
+ * already gone past is kept — enough to cover how far ahead a player usually
+ * runs, and no more, since it is all held in memory.
+ */
+const REPLAY_LIMIT_BYTES = 24 * 1024 * 1024;
 
 /**
  * How long a stream outlives the response it was feeding.
@@ -453,6 +471,9 @@ export function streamReport(): Record<string, unknown> {
 			startAt: active.startAt,
 			headBytes: active.head.length,
 			headDone: active.headDone,
+			replayBytes: active.fragBytes,
+			replayFrom: active.frags[0]?.at ?? null,
+			replayTo: active.frags[active.frags.length - 1]?.at ?? null,
 			hasReader: Boolean(active.res),
 			killed: active.proc.killed,
 			reservedFor: Math.max(0, active.reservedUntil - Date.now())
@@ -471,8 +492,18 @@ export function streamReport(): Record<string, unknown> {
  * reached without resolving, fetching or decoding anything again. The view that
  * had it gets the end of its response and stops.
  */
-export function takeOverStream(res: http.ServerResponse, id: string): boolean {
+export function takeOverStream(res: http.ServerResponse, id: string, at = 0): boolean {
 	if (!active || active.id !== id || active.proc.killed || !active.headDone) return false;
+
+	// The second the viewer was on, counted from the start of the stream rather
+	// than the start of the video.
+	const wanted = at - active.startAt;
+	const from = active.frags.findIndex((frag, index) =>
+		index === active!.frags.length - 1 || active!.frags[index + 1].at > wanted);
+	// Asked for a moment the stream no longer holds — before it began, or so far
+	// back that it has been dropped. Starting a stream of its own is the honest
+	// answer; this one would jump the picture.
+	if (from < 0 || active.frags[from].at > wanted + 2) return false;
 
 	const previous = active.res;
 	active.res = null;
@@ -484,6 +515,10 @@ export function takeOverStream(res: http.ServerResponse, id: string): boolean {
 		'Cache-Control': 'no-cache'
 	});
 	res.write(active.head);
+	// Everything from that second onwards is already here: the picture appears at
+	// once, and the live end of the pipe simply carries on after it.
+	for (let i = from; i < active.frags.length; i++) res.write(active.frags[i].data);
+
 	active.res = res;
 	// The pipe may have been held back by the view that is leaving, whose drain
 	// will never come now; the new one is ready for it.
@@ -513,29 +548,85 @@ function attachReader(stream: ActiveStream, res: http.ServerResponse): void {
 }
 
 /**
- * Collects the fragmented-MP4 header as it goes past.
+ * Reads the stream as it goes past: its header, and every fragment since.
  *
- * The top-level boxes arrive as a length and a name, and everything up to the
- * first `moof` is what a player needs before any fragment makes sense.
+ * Fragmented MP4 arrives as top-level boxes, each a length and a name. Up to the
+ * first `moof` is the header a player needs before anything else makes sense;
+ * after it come `moof`/`mdat` pairs, each dated by the decode time inside it.
+ * Both are kept, because a view taking the stream over needs the header and the
+ * second the viewer was actually on — not the live end, which by then is far
+ * ahead of the picture.
  */
-function collectHead(stream: ActiveStream, chunk: Buffer): void {
-	if (stream.headDone) return;
-
-	stream.head = stream.head.length ? Buffer.concat([stream.head, chunk]) : Buffer.from(chunk);
+function collect(stream: ActiveStream, chunk: Buffer): void {
+	stream.pending = stream.pending.length ? Buffer.concat([stream.pending, chunk]) : Buffer.from(chunk);
 
 	let at = 0;
-	while (at + 8 <= stream.head.length) {
-		const size = stream.head.readUInt32BE(at);
-		const type = stream.head.toString('latin1', at + 4, at + 8);
-		if (type === 'moof') {
-			stream.head = stream.head.subarray(0, at);
-			stream.headDone = true;
-			return;
+	while (at + 8 <= stream.pending.length) {
+		const size = stream.pending.readUInt32BE(at);
+		const type = stream.pending.toString('latin1', at + 4, at + 8);
+		// A box of no length runs to the end of the stream, so nothing whole can
+		// follow it; one that does not fit yet is waited for.
+		if (size < 8 || at + size > stream.pending.length) break;
+
+		const box = stream.pending.subarray(at, at + size);
+		if (!stream.headDone && type === 'moof') stream.headDone = true;
+
+		if (!stream.headDone) {
+			if (type === 'moov') stream.timescale = readTimescale(box) || stream.timescale;
+			stream.head = Buffer.concat([stream.head, box]);
+		} else if (type === 'moof') {
+			stream.frags.push({ data: box, at: fragmentTime(box) / stream.timescale });
+			stream.fragBytes += size;
+		} else if (stream.frags.length) {
+			// Whatever follows a moof — its mdat — belongs to that fragment.
+			const last = stream.frags[stream.frags.length - 1];
+			last.data = Buffer.concat([last.data, box]);
+			stream.fragBytes += size;
 		}
-		// A box of no length is the last one, and never the header.
-		if (size < 8) return;
+
 		at += size;
 	}
+
+	stream.pending = at ? stream.pending.subarray(at) : stream.pending;
+
+	// The oldest fragments go once the past kept is longer than any player would
+	// be behind by.
+	while (stream.fragBytes > REPLAY_LIMIT_BYTES && stream.frags.length > 1) {
+		stream.fragBytes -= stream.frags[0].data.length;
+		stream.frags.shift();
+	}
+}
+
+/** Walks nested boxes for `path`, e.g. moov → trak → mdia → mdhd. */
+function findBox(box: Buffer, path: string[], from = 8): Buffer | null {
+	let at = from;
+	while (at + 8 <= box.length) {
+		const size = box.readUInt32BE(at);
+		if (size < 8 || at + size > box.length) return null;
+		if (box.toString('latin1', at + 4, at + 8) === path[0]) {
+			const inner = box.subarray(at, at + size);
+			return path.length === 1 ? inner : findBox(inner, path.slice(1));
+		}
+		at += size;
+	}
+	return null;
+}
+
+/** Ticks per second of the first track, from `moov`. */
+function readTimescale(moov: Buffer): number {
+	const mdhd = findBox(moov, ['trak', 'mdia', 'mdhd']);
+	if (!mdhd || mdhd.length < 24) return 0;
+	// Version 1 carries 64-bit times, which pushes the timescale further along.
+	return mdhd.readUInt8(8) === 1 ? mdhd.readUInt32BE(28) : mdhd.readUInt32BE(20);
+}
+
+/** Where a fragment begins, in track ticks, from the `tfdt` inside it. */
+function fragmentTime(moof: Buffer): number {
+	const tfdt = findBox(moof, ['traf', 'tfdt']);
+	if (!tfdt || tfdt.length < 16) return 0;
+	// A 64-bit decode time needs the four bytes a 32-bit one does not have.
+	if (tfdt.readUInt8(8) === 1) return tfdt.length < 20 ? 0 : Number(tfdt.readBigUInt64BE(12));
+	return tfdt.readUInt32BE(12);
 }
 
 /**
@@ -847,6 +938,12 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 		startAt,
 		head: Buffer.alloc(0),
 		headDone: false,
+		// A sane default until moov names the real one, so a fragment read before
+		// then is dated in seconds rather than in nothing.
+		timescale: 90000,
+		frags: [],
+		fragBytes: 0,
+		pending: Buffer.alloc(0),
 		res,
 		reservedUntil: 0
 	};
@@ -854,7 +951,7 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 	// Whatever the warm-up already fetched goes out first, then the live pipe.
 	if (warm?.buffered.length) {
 		const buffered = Buffer.concat(warm.buffered);
-		collectHead(stream, buffered);
+		collect(stream, buffered);
 		res.write(buffered);
 		ff.stdout.resume();
 	}
@@ -868,7 +965,7 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 	// Written by hand rather than piped: a handover changes where the bytes go
 	// halfway through, and a pipe is bound to the one response it was made with.
 	ff.stdout.on('data', (chunk: Buffer) => {
-		collectHead(stream, chunk);
+		collect(stream, chunk);
 		if (stream.res?.write(chunk) === false) {
 			ff.stdout.pause();
 			stream.res.once('drain', () => ff.stdout.resume());
@@ -1479,17 +1576,9 @@ function playerPageHtml(
 			if (!takenOver) { stop(); return; }
 			try {
 				if (video.buffered.length) {
+					// The stream replays from the second that was asked for, so its
+					// first buffered moment is where this view should stand.
 					var joinAt = video.buffered.start(0);
-					// A stream fetches ahead of whoever is watching it, and while a
-					// video sits paused it runs on without them. Landing where it
-					// has got to would jump the picture forward, so a stream that
-					// has left the viewer behind is let go and this view fetches
-					// the second it actually wants.
-					if (Math.abs(offset + joinAt - pendingAt) > 3) {
-						stop();
-						startStream(pendingAt, wasPlaying);
-						return;
-					}
 					if (video.currentTime < joinAt) video.currentTime = joinAt;
 					stop();
 					return;
