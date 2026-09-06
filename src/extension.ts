@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import { YouTubeViewProvider } from './provider';
-import { checkTools, handleInfo, handleMedia, handlePlayerPage, handlePlaylist, handleTools, setServerPort, setToolConfig, shutdownStreams } from './ytproxy';
+import { checkTools, handleInfo, handleMedia, handlePlayerPage, handlePlaylist, handleTools, setServerPort, setToolConfig, shutdownStreams, streamReport, takeOverStream } from './ytproxy';
 
 let proxyServer: http.Server | null = null;
 let proxyPort = 0;
@@ -23,6 +23,14 @@ async function startProxyServer(): Promise<void> {
 
 	proxyServer = http.createServer((req, res) => {
 		const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+
+		// Read by the probe harness, not by any page: what is streaming and what
+		// is cached, so a handover that did not happen can be explained.
+		if (url.pathname === '/streams') {
+			res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+			res.end(JSON.stringify(streamReport()));
+			return;
+		}
 
 		if (url.pathname === '/tools') {
 			void handleTools(res, url.searchParams.get('refresh') === '1');
@@ -61,11 +69,25 @@ async function startProxyServer(): Promise<void> {
 		}
 
 		if (url.pathname === '/media') {
+			// A video moved between the panel and a tab asks for the stream the
+			// other view was watching, which carries on where it stood. Should it
+			// be gone by now, the video id and offset beside it start a new one.
+			// Refused rather than started afresh: the page has already set its clock
+			// by where that stream stood, and only it knows what to ask for instead.
+			const take = url.searchParams.get('take');
+			if (take) {
+				if (!takeOverStream(res, take)) { res.writeHead(409); res.end('Stream is gone'); }
+				return;
+			}
+
 			void handleMedia(res, videoId, parseInt(url.searchParams.get('t') ?? '0', 10));
 			return;
 		}
 
-		handlePlayerPage(res, videoId, startTime, autoplay);
+		const take = url.searchParams.get('take');
+		handlePlayerPage(res, videoId, startTime, autoplay, take
+			? { id: take, startAt: parseInt(url.searchParams.get('takeAt') ?? '0', 10) }
+			: null);
 	});
 
 	await new Promise<void>((resolve, reject) => {

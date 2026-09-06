@@ -671,7 +671,16 @@ window.addEventListener('message', event => {
 			
 			if (isSameProxy) {
 
-				const loadData = { type: 'load', id: nextId, startTime: startTime, autoplay: startAutoplay };
+				// A video arriving from the other view brings the stream it was
+				// already playing, which the player picks up where it stood.
+				const loadData = {
+					type: 'load',
+					id: nextId,
+					startTime: startTime,
+					autoplay: startAutoplay,
+					takeStream: message.takeStream,
+					takeOffset: message.takeOffset
+				};
 				
 				if (isIframeReady) {
 					iframe.contentWindow.postMessage(loadData, '*');

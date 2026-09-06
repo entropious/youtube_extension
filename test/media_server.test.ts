@@ -153,16 +153,26 @@ describe('Media server endpoints', () => {
             expect(args[args.indexOf('-ss') + 1]).to.equal('150');
         });
 
-        it('kills ffmpeg when the viewer navigates away', async () => {
+        it('holds the stream when the viewer goes away, and ends it if nobody returns', async () => {
             spawn.withArgs('yt-dlp').callsFake(() => fakeProcess({ stdout: videoJson }));
             const ffmpeg = fakeProcess({});
             spawn.withArgs('ffmpeg').callsFake(() => ffmpeg);
             const res = fakeResponse();
 
             await handleMedia(res, 'kJQP7kiw5Fk', 0);
-            res.emit('close');
+            const clock = sinon.useFakeTimers({ now: Date.now(), toFake: ['Date', 'setTimeout'] });
+            try {
+                res.emit('close');
 
-            expect(ffmpeg.kill.calledWith('SIGKILL')).to.equal(true);
+                // Pausing a video is enough for a browser to drop the connection,
+                // and the same page usually comes straight back for the stream.
+                expect(ffmpeg.kill.called).to.equal(false);
+
+                clock.tick(16 * 1000);
+                expect(ffmpeg.kill.calledWith('SIGKILL')).to.equal(true);
+            } finally {
+                clock.restore();
+            }
         });
 
         it('answers 502 with the reason when the video cannot be resolved', async () => {
@@ -193,7 +203,7 @@ describe('Media server endpoints', () => {
             expect(res.statusCode).to.equal(200);
             expect(res.headers['Content-Type']).to.contain('text/html');
             expect(res.body).to.contain('"kJQP7kiw5Fk"');
-            expect(res.body).to.contain('load(videoId, 90, true)');
+            expect(res.body).to.contain('load(videoId, 90, true, "", 0)');
         });
 
         it('cues without autoplay when asked', () => {
@@ -201,7 +211,7 @@ describe('Media server endpoints', () => {
 
             handlePlayerPage(res, 'kJQP7kiw5Fk', 0, false);
 
-            expect(res.body).to.contain('load(videoId, 0, false)');
+            expect(res.body).to.contain('load(videoId, 0, false, "", 0)');
         });
 
         it('is never cached, since the port changes between sessions', () => {
