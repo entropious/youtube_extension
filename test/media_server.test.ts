@@ -167,6 +167,18 @@ describe('Media server endpoints', () => {
             // A view taking this stream over counts from where it really begins.
             expect(handoffStream('cutMedia001')!.startAt).to.equal(5.88);
         });
+
+        it('takes a whole second just short of a head as that head, as the player does', async () => {
+            spawn.withArgs('yt-dlp').callsFake(() => fakeProcess({ stdout: pairJson }));
+            spawn.withArgs('ffmpeg').callsFake(() => fakeProcess({}));
+
+            // 5.88 comes back from a view as 5, which lies in the first segment.
+            await handleMedia(fakeResponse(), 'cutMedia002', 5);
+
+            const args: string[] = spawn.getCalls().find(c => c.args[0] === 'ffmpeg')!.args[1];
+            expect(args).to.include('http://127.0.0.1:8799/playlist?v=cutMedia002&i=0&from=1');
+            expect(handoffStream('cutMedia002')!.startAt).to.equal(5.88);
+        });
     });
 
     describe('/tools', () => {
