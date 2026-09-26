@@ -298,6 +298,21 @@ const commands = {
 		console.log(JSON.stringify(await readLayout(), null, 1));
 	},
 
+	// Показать или спрятать нижнюю панель кнопкой в заголовке окна. Не зависит
+	// от фокуса, в отличие от cmd+j, которое страница плеера забирает себе.
+	async togglepanel() {
+		const target = await workbenchTarget();
+		const clicked = await evaluate(target.webSocketDebuggerUrl, `(() => {
+			const button = Array.from(document.querySelectorAll('.titlebar-container .action-label, .titlebar .action-label'))
+				.find(b => /toggle panel/i.test(b.getAttribute('aria-label') || ''));
+			if (!button) return 'кнопки нет';
+			button.click();
+			return 'clicked';
+		})()`);
+		await new Promise(r => setTimeout(r, 1500));
+		console.log(JSON.stringify({ clicked, ...(await readLayout()) }, null, 1));
+	},
+
 	// Что видно в окне: нижняя панель, её вкладка, активная вкладка редактора.
 	async layout() {
 		console.log(JSON.stringify(await readLayout(), null, 1));
