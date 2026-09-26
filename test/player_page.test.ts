@@ -234,6 +234,16 @@ describe('Player page', () => {
                 expect(eventsSent('timeUpdate').pop().time).to.equal(6);
             });
 
+            it('takes a whole second just short of a head as that head, so moves do not creep back', async () => {
+                // 5.88 comes back from the panel as 5, which lies in the segment before.
+                loadPage({ startTime: 5, cuts, duration: 20 });
+                await settle();
+
+                await new Promise(resolve => setTimeout(resolve, 1100));
+                expect(eventsSent('timeUpdate').pop().time).to.equal(5);
+                expect(document.getElementById('time')!.textContent).to.equal('0:05 / 0:20');
+            });
+
             it('seeks to the nearest head of a segment, asking for it to the fraction', async () => {
                 const video = loadPage({ duration: 20, cuts });
                 await settle();

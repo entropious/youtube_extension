@@ -993,6 +993,17 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 	attachReader(stream, res);
 }
 
+/**
+ * How far past a position the segment holding it is looked for.
+ *
+ * Positions travel between views and into history as whole seconds, rounded
+ * down, so a stream begun at a segment head comes back as the second before
+ * it — which lies in the previous segment. Taken as it is, every move of a
+ * paused video would set it back by a segment. The player looks the same
+ * distance ahead, so both pick one segment.
+ */
+export const WHOLE_SECOND_SLACK = 1;
+
 /** Playlists served from here, cut at the head of the segment playback falls in. */
 export type TrimmedInputs = { urls: string[]; startsAt: number };
 
@@ -1039,7 +1050,7 @@ async function trimmedInputs(videoId: string, stream: StreamInfo, startAt: numbe
 
 	// Every part is cut at the same segment: YouTube splits the video and the
 	// audio of a pair at the same moments.
-	const cut = segmentAt(playlists[0], startAt);
+	const cut = segmentAt(playlists[0], startAt + WHOLE_SECOND_SLACK);
 	const urls = playlists.map((_, index) =>
 		`http://127.0.0.1:${serverPort}/playlist?v=${encodeURIComponent(videoId)}&i=${index}&from=${cut.index}`);
 
@@ -1567,15 +1578,16 @@ function playerPageHtml(
 	/**
 	 * The second a stream of our own, asked for at a given second, actually begins.
 	 *
-	 * The server cuts it at the head of the segment holding that second; the same
-	 * segment is found here from the list /info sent. The element cannot move
-	 * inside the stream afterwards — it is served without byte ranges, and such a
-	 * stream is only seekable to its start — so playback begins right there.
+	 * The server cuts it at the head of the segment holding that second, looked
+	 * for a little ahead since positions come rounded down to whole seconds; the
+	 * same segment is found here from the list /info sent. The element cannot
+	 * move inside the stream afterwards — it is served without byte ranges, and
+	 * such a stream is only seekable to its start — so playback begins right there.
 	 */
 	function streamStart(at) {
 		if (!cuts || !cuts.length) return at;
 		var start = 0;
-		for (var i = 0; i < cuts.length && cuts[i] <= at; i++) start = cuts[i];
+		for (var i = 0; i < cuts.length && cuts[i] <= at + ${WHOLE_SECOND_SLACK}; i++) start = cuts[i];
 		return start;
 	}
 
