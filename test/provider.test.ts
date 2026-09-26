@@ -127,6 +127,117 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
         expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl' }))).to.be.false;
     });
 
+    describe('leaving the tab', () => {
+        const video = 'https://www.youtube.com/watch?v=M7lc1UVf-VE';
+        let executeCommand: sinon.SinonStub;
+
+        beforeEach(() => {
+            executeCommand = (vscode.commands.executeCommand as sinon.SinonStub).resolves();
+            executeCommand.resetHistory();
+        });
+
+        /** A video playing in a tab, with the panel view open or closed. */
+        function playingInTab(panelOpen: boolean) {
+            const viewWebview = createMockWebview();
+            const view = createMockWebviewView(viewWebview);
+            provider.resolveWebviewView(view as any, {} as any, {} as any);
+            view.visible = panelOpen;
+            const panelWebview = createMockWebview();
+            const panel = createMockWebviewPanel(panelWebview);
+            (vscode.window.createWebviewPanel as sinon.SinonStub).returns(panel);
+            provider.openInPanel(video);
+            viewWebview.postMessage.resetHistory();
+            panelWebview.postMessage.resetHistory();
+            const hide = () => {
+                panel.visible = false;
+                panel.onDidChangeViewState.getCall(0).args[0]({ webviewPanel: panel });
+            };
+            return { view, viewWebview, panel, panelWebview, hide };
+        }
+
+        it('moves the video to the panel view when the panel is open', () => {
+            const { viewWebview, hide } = playingInTab(true);
+
+            hide();
+
+            expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl', originalUrl: video }))).to.be.true;
+        });
+
+        it('keeps it playing in the tab when the panel is closed, and never opens the panel', () => {
+            const { view, viewWebview, panelWebview, hide } = playingInTab(false);
+
+            hide();
+
+            expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl' }))).to.be.false;
+            expect(view.show.called).to.be.false;
+            expect(executeCommand.called).to.be.false;
+            // The tab is still the player the keys and commands reach.
+            provider.togglePlay();
+            expect(panelWebview.postMessage.calledWith(sinon.match({ type: 'togglePlay' }))).to.be.true;
+        });
+
+        it('follows the same rule after a link opened a video in the tab', async () => {
+            const link = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
+            const closed = playingInTab(false);
+            await provider.loadFromLink(link, 0);
+            closed.viewWebview.postMessage.resetHistory();
+            closed.hide();
+            expect(closed.viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl' }))).to.be.false;
+
+            closed.view.visible = true;
+            closed.panel.visible = true;
+            closed.panel.onDidChangeViewState.getCall(0).args[0]({ webviewPanel: closed.panel });
+            closed.hide();
+            expect(closed.viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl', originalUrl: link }))).to.be.true;
+        });
+
+        it('hands the video back to the panel view when the tab is closed', () => {
+            const { viewWebview, panel } = playingInTab(false);
+
+            panel.onDidDispose.getCall(0).args[0]();
+
+            expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl', originalUrl: video }))).to.be.true;
+        });
+    });
+
+    describe('a video opened by a vscode:// link', () => {
+        const link = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+        let executeCommand: sinon.SinonStub;
+
+        beforeEach(() => {
+            executeCommand = (vscode.commands.executeCommand as sinon.SinonStub).resolves();
+            executeCommand.resetHistory();
+        });
+
+        it('goes to the editor tab in use, leaving the panel view closed', async () => {
+            const viewWebview = createMockWebview();
+            provider.resolveWebviewView(createMockWebviewView(viewWebview) as any, {} as any, {} as any);
+            const panelWebview = createMockWebview();
+            const panel = createMockWebviewPanel(panelWebview);
+            (vscode.window.createWebviewPanel as sinon.SinonStub).returns(panel);
+            provider.openInPanel('https://www.youtube.com/watch?v=M7lc1UVf-VE');
+            panelWebview.postMessage.resetHistory();
+
+            await provider.loadFromLink(link, 0);
+
+            expect(executeCommand.calledWith('youtube-panel.view.focus')).to.be.false;
+            expect(panel.reveal.called).to.be.true;
+            expect(panelWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl', originalUrl: link }))).to.be.true;
+            expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl' }))).to.be.false;
+        });
+
+        it('opens the panel view when no tab is in use', async () => {
+            const viewWebview = createMockWebview();
+            provider.resolveWebviewView(createMockWebviewView(viewWebview) as any, {} as any, {} as any);
+
+            await provider.loadFromLink(link, 0);
+
+            expect(executeCommand.calledWith('youtube-panel.view.focus')).to.be.true;
+            expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl', originalUrl: link }))).to.be.true;
+        });
+    });
+
     it('should correctly initialize restored (deserialized) panels', async () => {
         const panelWebview = createMockWebview();
         const panel = createMockWebviewPanel(panelWebview);
