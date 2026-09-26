@@ -52,6 +52,9 @@ cdp_up() { curl -s --max-time 2 "http://127.0.0.1:$CDP_PORT/json/version" > /dev
 
 # Только процессы этого отладочного профиля, чужие окна VS Code не трогаются.
 host_pids() { ps ax -o pid,command | grep "user-data-dir=$PROFILE" | grep -v grep | awk '{print $1}'; }
+# Главный процесс приложения. У хелперов (рендереры, хосты расширений) свои
+# бандлы — «Code Helper.app/Contents/MacOS/…», — и под этот шаблон они не попадают.
+main_pids() { ps ax -o pid,command | grep "user-data-dir=$PROFILE" | grep "Code.app/Contents/MacOS/Code " | grep -v grep | awk '{print $1}'; }
 
 case "${1:-}" in
 start)
@@ -81,7 +84,7 @@ load)
 	"${CHECK[@]}" ready
 	;;
 
-state|ready|play|pause|targets|messages|webview|space|click|chapters|setup|claude|timing|seektiming|recover|tap|errorfix|players|panel|totab|streams|open)
+state|ready|play|pause|targets|messages|webview|space|click|chapters|setup|claude|timing|seektiming|recover|tap|errorfix|players|panel|totab|streams|open|keys|layout|playin)
 	"${CHECK[@]}" "$@"
 	;;
 
@@ -162,15 +165,16 @@ restart)
 	;;
 
 stop)
-	PIDS="$(host_pids)"
-	[ -z "$PIDS" ] && { echo "окно не запущено"; exit 0; }
-	# Сначала мягко: на kill -9 VS Code не успевает сбросить globalState, и
-	# настройки, изменённые перед закрытием, откатываются к прежним.
-	echo "$PIDS" | xargs kill 2>/dev/null
-	for _ in $(seq 1 10); do sleep 1; [ -z "$(host_pids)" ] && break; done
-	REMAINING="$(host_pids)"
-	[ -n "$REMAINING" ] && { echo "$REMAINING" | xargs kill -9; sleep 2; }
-	[ -z "$(host_pids)" ] && echo "окно закрыто" || { echo "процессы остались: $(host_pids)"; exit 1; }
+	[ -z "$(host_pids)" ] && { echo "окно не запущено"; exit 0; }
+	# SIGTERM только главному процессу: Electron отвечает на него обычным
+	# выходом, как на Cmd+Q, и сам закрывает окна и хелперы. Хелперы, убитые
+	# по отдельности, и kill -9 VS Code считает падением — при следующем
+	# запуске он восстанавливает окно поверх остальных и теряет globalState.
+	MAIN="$(main_pids)"
+	[ -z "$MAIN" ] && { echo "главный процесс не найден, остались: $(host_pids)"; exit 1; }
+	echo "$MAIN" | xargs kill -TERM 2>/dev/null
+	for _ in $(seq 1 30); do sleep 1; [ -z "$(host_pids)" ] && { echo "окно закрыто"; exit 0; }; done
+	echo "окно не закрылось за 30 с, процессы: $(host_pids) — принудительно не добиваю"; exit 1
 	;;
 
 *)

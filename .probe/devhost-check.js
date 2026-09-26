@@ -24,6 +24,68 @@ async function webviewTarget() {
 	return found;
 }
 
+/** Само окно VS Code — страница workbench, в которой живут панель и вкладки. */
+async function workbenchTarget() {
+	const list = await targets();
+	const found = list.find(t => t.type === 'page' && (t.url || '').includes('workbench') && t.webSocketDebuggerUrl);
+	if (!found) throw new Error('окно VS Code не найдено');
+	return found;
+}
+
+/** Сочетание вида cmd+alt+ArrowLeft, нажатое в окне VS Code. */
+function dispatchKeys(wsUrl, combo) {
+	const parts = combo.split('+');
+	const key = parts.pop();
+	const bits = { alt: 1, ctrl: 2, cmd: 4, meta: 4, shift: 8 };
+	const modifiers = parts.reduce((m, p) => m | (bits[p] || 0), 0);
+	const named = { ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Escape: 27, Enter: 13, Tab: 9 };
+	const keyCode = named[key] || key.toUpperCase().charCodeAt(0);
+	const code = named[key] ? key : `Key${key.toUpperCase()}`;
+	const event = type => ({ type, modifiers, key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode });
+	return new Promise((resolve, reject) => {
+		const ws = new WebSocket(wsUrl);
+		const timer = setTimeout(() => { ws.close(); reject(new Error('таймаут CDP')); }, 15000);
+		ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Input.dispatchKeyEvent', params: event('rawKeyDown') }));
+		ws.onmessage = e => {
+			const msg = JSON.parse(e.data);
+			if (msg.id === 1) return ws.send(JSON.stringify({ id: 2, method: 'Input.dispatchKeyEvent', params: event('keyUp') }));
+			if (msg.id === 2) { clearTimeout(timer); ws.close(); resolve(); }
+		};
+		ws.onerror = () => { clearTimeout(timer); reject(new Error('ошибка соединения CDP')); };
+	});
+}
+
+/**
+ * Страницы плеера с местом, где они живут. Плеер вложен в webview, а webview
+ * вида в панели отличается от вкладки параметром purpose=webviewView.
+ */
+async function placedPlayers() {
+	const list = await targets();
+	return list
+		.filter(t => (t.url || '').includes(PLAYER_URL) && t.webSocketDebuggerUrl)
+		.map(target => {
+			const parent = list.find(p => p.id === target.parentId);
+			const where = parent && (parent.url || '').includes('purpose=webviewView') ? 'panel' : 'tab';
+			return { where, target };
+		});
+}
+
+async function readLayout() {
+	const target = await workbenchTarget();
+	return evaluate(target.webSocketDebuggerUrl, `(() => {
+		const panel = document.querySelector('.part.panel');
+		const shown = el => Boolean(el && el.offsetParent !== null && el.getBoundingClientRect().height > 0);
+		const activePanelTab = document.querySelector('.part.panel .composite-bar .action-item.checked');
+		const activeEditor = document.querySelector('.editor-group-container.active .tab.active');
+		return {
+			нижняяПанельВидна: shown(panel),
+			вкладкаПанели: activePanelTab ? activePanelTab.textContent.trim() : null,
+			активныйРедактор: activeEditor ? activeEditor.getAttribute('aria-label') : null,
+			вкладкиРедактора: Array.from(document.querySelectorAll('.tab')).map(t => t.getAttribute('aria-label'))
+		};
+	})()`);
+}
+
 async function playerTarget() {
 	const list = await targets();
 	const found = list.find(t => (t.url || '').includes(PLAYER_URL) && t.webSocketDebuggerUrl);
@@ -194,14 +256,13 @@ const commands = {
 		console.log(JSON.stringify(await res.json(), null, 1));
 	},
 
-	// Каждая страница плеера отдельно: при переносе видео между панелью и
-	// вкладкой их две, и различать их приходится по адресу.
+	// Каждая страница плеера отдельно, с тем, где она: в панели или во вкладке.
 	async players() {
-		const list = (await targets()).filter(t => (t.url || '').includes(PLAYER_URL) && t.webSocketDebuggerUrl);
 		const states = [];
-		for (const target of list) {
+		for (const { where, target } of await placedPlayers()) {
 			await evaluate(target.webSocketDebuggerUrl, MUTE).catch(() => undefined);
 			states.push({
+				где: where,
 				url: target.url.replace(/^https?:\/\/127\.0\.0\.1:\d+/, ''),
 				...(await evaluate(target.webSocketDebuggerUrl, STATE))
 			});
@@ -209,11 +270,37 @@ const commands = {
 		console.log(JSON.stringify(states, null, 1));
 	},
 
+	// Запустить плеер в панели или во вкладке, с user gesture.
+	async playin(where) {
+		const found = (await placedPlayers()).find(p => p.where === where);
+		if (!found) throw new Error(`плеера «${where}» нет: есть панель и вкладка`);
+		await evaluate(found.target.webSocketDebuggerUrl, MUTE).catch(() => undefined);
+		const result = await evaluate(found.target.webSocketDebuggerUrl,
+			`document.querySelector('video').play().then(() => 'ok', e => e.name + ': ' + e.message)`);
+		await new Promise(r => setTimeout(r, 2000));
+		console.log(JSON.stringify({ play: result, ...(await evaluate(found.target.webSocketDebuggerUrl, STATE)) }, null, 1));
+	},
+
 	// Выражение в контексте панели. Её разметка живёт во вложенном фрейме, а
 	// `doc` в выражении — это его документ, где и лежат кнопки вокруг плеера.
 	async panel(expression) {
 		if (!expression) throw new Error('нужно выражение');
 		console.log(JSON.stringify(await inPanel(expression), null, 1));
+	},
+
+	// Сочетание клавиш в окне VS Code: cmd+j прячет и показывает нижнюю
+	// панель, cmd+alt+ArrowLeft переключает вкладку редактора.
+	async keys(combo) {
+		if (!combo) throw new Error('нужно сочетание: keys cmd+j');
+		const target = await workbenchTarget();
+		await dispatchKeys(target.webSocketDebuggerUrl, combo);
+		await new Promise(r => setTimeout(r, 1500));
+		console.log(JSON.stringify(await readLayout(), null, 1));
+	},
+
+	// Что видно в окне: нижняя панель, её вкладка, активная вкладка редактора.
+	async layout() {
+		console.log(JSON.stringify(await readLayout(), null, 1));
 	},
 
 	// Открыть видео так же, как поле поиска в панели: сообщением расширению.
