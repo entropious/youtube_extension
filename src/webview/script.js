@@ -1274,14 +1274,20 @@ function setPlayingByHand(playing) {
 	}
 }
 
+// Hiding the view holds only a video that was playing, and coming back only
+// restores that; Claude, by contrast, starts playback as well as stopping it.
+const HOLDS_ONLY_PLAYBACK = new Set(['hidden']);
+
 function autoPause(reason) {
 	if (pausedByHand) return;
+	if (HOLDS_ONLY_PLAYBACK.has(reason) && isPaused && autoPauseReasons.size === 0) return;
 	autoPauseReasons.add(reason);
 	sendPlayback('pauseVideo');
 }
 
 function autoResume(reason) {
-	autoPauseReasons.delete(reason);
+	const held = autoPauseReasons.delete(reason);
+	if (!held && HOLDS_ONLY_PLAYBACK.has(reason)) return;
 	if (!pausedByHand && autoPauseReasons.size === 0) sendPlayback('playVideo');
 }
 

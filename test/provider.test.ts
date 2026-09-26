@@ -192,6 +192,52 @@ describe('YouTubeViewProvider Playback and Targeting', () => {
             expect(closed.viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl', originalUrl: link }))).to.be.true;
         });
 
+        it('leaves a video playing in a tab on screen alone as the panel opens and closes', () => {
+            const { view, viewWebview, panelWebview } = playingInTab(false);
+            const visibility = view.onDidChangeVisibility.getCall(0).args[0];
+
+            view.visible = true;
+            visibility();
+            view.visible = false;
+            visibility();
+            view.visible = true;
+            visibility();
+
+            // Nothing is loaded into the panel, nothing reloaded into the tab, and
+            // neither is paused or started for the panel's sake.
+            expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl' }))).to.be.false;
+            expect(panelWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl' }))).to.be.false;
+            expect(panelWebview.postMessage.calledWith(sinon.match({ type: 'autoPause' }))).to.be.false;
+            expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'autoResume' }))).to.be.false;
+            provider.togglePlay();
+            expect(panelWebview.postMessage.calledWith(sinon.match({ type: 'togglePlay' }))).to.be.true;
+        });
+
+        it('brings a video over from a tab out of sight when the panel opens', () => {
+            const { view, viewWebview, panel } = playingInTab(false);
+            panel.visible = false;
+
+            view.visible = true;
+            view.onDidChangeVisibility.getCall(0).args[0]();
+
+            expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl', originalUrl: video }))).to.be.true;
+        });
+
+        it('pauses only the panel when the panel playing the video closes', () => {
+            const { view, viewWebview, panelWebview, panel } = playingInTab(true);
+            // The panel takes the video over as the tab goes out of sight.
+            panel.visible = false;
+            panel.onDidChangeViewState.getCall(0).args[0]({ webviewPanel: panel });
+            panelWebview.postMessage.resetHistory();
+
+            view.visible = false;
+            view.onDidChangeVisibility.getCall(0).args[0]();
+
+            expect(viewWebview.postMessage.calledWith(sinon.match({ type: 'autoPause', reason: 'hidden' }))).to.be.true;
+            expect(panelWebview.postMessage.calledWith(sinon.match({ type: 'autoPause' }))).to.be.false;
+            expect(panelWebview.postMessage.calledWith(sinon.match({ type: 'loadUrl', originalUrl: video }))).to.be.true;
+        });
+
         it('hands the video back to the panel view when the tab is closed', () => {
             const { viewWebview, panel } = playingInTab(false);
 

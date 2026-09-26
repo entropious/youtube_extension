@@ -152,6 +152,40 @@ describe('Panel: Claude sync and setup screen', () => {
         });
     });
 
+    describe('hiding the view', () => {
+        const playerState = (state: number) =>
+            fromExtension({ event: 'infoDelivery', info: { playerState: state }, videoId: 'kJQP7kiw5Fk' });
+
+        it('holds a playing video and lets it play on coming back', () => {
+            load();
+            playerState(1);
+
+            fromExtension({ type: 'autoPause', reason: 'hidden' });
+            fromExtension({ type: 'autoResume', reason: 'hidden' });
+
+            expect(commandsToFrame()).to.deep.equal(['pauseVideo', 'playVideo']);
+        });
+
+        it('never starts a video that was not playing when the view was hidden', () => {
+            load();
+            playerState(2);
+
+            fromExtension({ type: 'autoPause', reason: 'hidden' });
+            fromExtension({ type: 'autoResume', reason: 'hidden' });
+
+            expect(commandsToFrame()).to.be.empty;
+        });
+
+        it('leaves Claude free to start a paused video, as the switch promises', () => {
+            load();
+            playerState(2);
+
+            fromExtension({ type: 'autoResume', reason: 'claude' });
+
+            expect(commandsToFrame()).to.deep.equal(['playVideo']);
+        });
+    });
+
     describe('the switch', () => {
         it('asks the extension for the stored setting on load', () => {
             load();
