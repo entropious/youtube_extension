@@ -126,6 +126,16 @@ describe('Stream resolution', () => {
             expect(ffmpegArgs(pair, 0)).to.not.include('-ss');
         });
 
+        it('starts trimmed playlists at their first segment, without skipping into it', () => {
+            // Copied video can only begin at the segment's keyframe while the audio
+            // would begin at the exact second: the picture would trail the sound.
+            const trimmed = { urls: ['http://127.0.0.1:1/playlist?i=0', 'http://127.0.0.1:1/playlist?i=1'], startsAt: 147.2 };
+            const args = ffmpegArgs(pair, 150, trimmed);
+
+            expect(args).to.not.include('-ss');
+            expect(args.filter((_, i) => args[i - 1] === '-i')).to.deep.equal(trimmed.urls);
+        });
+
         it('passes the headers yt-dlp expects, since the CDN checks them', () => {
             const args = ffmpegArgs(single);
 

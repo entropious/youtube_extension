@@ -3,7 +3,10 @@ import * as sinon from 'sinon';
 import { EventEmitter } from 'events';
 import { PassThrough, Readable } from 'stream';
 import * as childProcess from 'child_process';
-import { handleInfo, handleMedia, handlePlayerPage, handleTools, setToolConfig } from '../src/ytproxy';
+import * as https from 'https';
+import {
+    handleInfo, handleMedia, handlePlayerPage, handleTools, handoffStream, setServerPort, setToolConfig, shutdownStreams
+} from '../src/ytproxy';
 
 function fakeProcess(options: { stdout?: string; stderr?: string; code?: number; error?: NodeJS.ErrnoException }) {
     const proc: any = new EventEmitter();
@@ -110,6 +113,59 @@ describe('Media server endpoints', () => {
             await handleInfo(res, 'kJQP7kiw5Fk');
 
             expect(res.statusCode).to.equal(501);
+        });
+    });
+
+    describe('a stream cut from its HLS playlists', () => {
+        const pairJson = JSON.stringify({
+            duration: 17,
+            title: 'Pair',
+            requested_formats: [
+                { url: 'https://example/video.m3u8', protocol: 'm3u8_native', http_headers: {} },
+                { url: 'https://example/audio.m3u8', protocol: 'm3u8_native', http_headers: {} }
+            ]
+        });
+        const playlist = [
+            '#EXTM3U', '#EXTINF:5.88,', 'https://example/0.ts', '#EXTINF:5.92,', 'https://example/1.ts',
+            '#EXTINF:5.2,', 'https://example/2.ts', '#EXT-X-ENDLIST'
+        ].join('\n');
+
+        beforeEach(() => {
+            setServerPort(8799);
+            sinon.stub(https, 'get').callsFake(((_url: string, _options: unknown, callback: (r: any) => void) => {
+                const response: any = Readable.from([Buffer.from(playlist)]);
+                response.statusCode = 200;
+                setImmediate(() => callback(response));
+                return new EventEmitter();
+            }) as any);
+        });
+
+        afterEach(() => {
+            shutdownStreams();
+            setServerPort(0);
+        });
+
+        it('/info lists where the segments begin, for the player to count its clock from', async () => {
+            spawn.callsFake(() => fakeProcess({ stdout: pairJson }));
+            const res = fakeResponse();
+
+            await handleInfo(res, 'cutInfo0001');
+
+            expect(JSON.parse(res.body).cuts).to.deep.equal([0, 5.88, 5.88 + 5.92]);
+        });
+
+        it('starts at the head of the segment, never inside it, and hands over from there', async () => {
+            spawn.withArgs('yt-dlp').callsFake(() => fakeProcess({ stdout: pairJson }));
+            spawn.withArgs('ffmpeg').callsFake(() => fakeProcess({}));
+            const res = fakeResponse();
+
+            await handleMedia(res, 'cutMedia001', 8);
+
+            const args: string[] = spawn.getCalls().find(c => c.args[0] === 'ffmpeg')!.args[1];
+            expect(args).to.not.include('-ss');
+            expect(args).to.include('http://127.0.0.1:8799/playlist?v=cutMedia001&i=1&from=1');
+            // A view taking this stream over counts from where it really begins.
+            expect(handoffStream('cutMedia001')!.startAt).to.equal(5.88);
         });
     });
 

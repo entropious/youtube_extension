@@ -41,7 +41,7 @@ into ffmpeg's playlist URLs. Routes, all one call into `ytproxy`:
 | route | who calls it | what it does |
 | --- | --- | --- |
 | `/embed?v&start&autoplay&take&takeAt` | the panel's iframe | the player page |
-| `/info?v` | the player | duration and title; JSON error plus a `fix` command |
+| `/info?v` | the player | duration, title, segment heads (`cuts`); JSON error plus a `fix` command |
 | `/media?v&t` or `?take=<id>` | `<video src>` | fragmented MP4 from ffmpeg, or a handed-over stream (409 if gone) |
 | `/playlist?v&i&from` | **ffmpeg** | an HLS playlist cut at the seek point |
 | `/tools?refresh` | the panel's setup gate | is yt-dlp/ffmpeg installed, with install recipes |
@@ -68,8 +68,15 @@ progressive sits last as a fallback ffmpeg can barely use.
 fragmented MP4 (`frag_keyframe+empty_moov+default_base_moof`) and writes to the
 response. Seeking does not use `-ss` on YouTube's playlist — that fetches the
 opening segments and throws them away — so playlists are fetched here, cut at
-the segment covering the seek, and served from `/playlist` with only the
-remainder inside that segment left for `-ss`.
+the segment covering the seek, and served from `/playlist`. A cut stream begins
+at the **head** of that segment with no `-ss` at all: copied video can only start
+at the segment's keyframe while re-encoded audio starts exactly where `-ss` says,
+and fragmented MP4 has no edit list to reconcile them — the picture trailed the
+sound by up to a segment (~6 s). The element cannot move inside the stream
+either (no byte ranges, so it is seekable only to its start), so the player
+counts its clock from the segment head, taken from the `cuts` list `/info`
+sends, and seeks snap to the nearest head in the direction of travel.
+`.probe/avsync.js` measures all of this against the source segments.
 
 **Warm-ups.** `prewarmStream` starts resolution *and* ffmpeg while the player
 page is still loading, buffering up to 12 MB for 60 seconds; the request that

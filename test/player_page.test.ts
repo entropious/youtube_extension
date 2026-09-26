@@ -26,7 +26,7 @@ describe('Player page', () => {
     let fetchStub: sinon.SinonStub;
 
     /** Loads the page with a stubbed /info and a <video> jsdom can pretend to play. */
-    function loadPage(options: { duration?: number; startTime?: number; autoplay?: boolean; infoFails?: string } = {}) {
+    function loadPage(options: { duration?: number; startTime?: number; autoplay?: boolean; infoFails?: string; cuts?: number[] } = {}) {
         const html = playerHtml('kJQP7kiw5Fk', options.startTime ?? 0, options.autoplay ?? true);
 
         dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://127.0.0.1:8799/embed?v=kJQP7kiw5Fk' });
@@ -41,7 +41,7 @@ describe('Player page', () => {
             ok: !options.infoFails,
             json: () => Promise.resolve(options.infoFails
                 ? { error: options.infoFails }
-                : { duration: options.duration ?? 282, title: 'Despacito' })
+                : { duration: options.duration ?? 282, title: 'Despacito', cuts: options.cuts })
         }));
         window.fetch = fetchStub;
 
@@ -217,6 +217,47 @@ describe('Player page', () => {
             seek.dispatchEvent(new window.Event('change'));
 
             expect(video.getAttribute('src')).to.equal('/media?v=kJQP7kiw5Fk&t=199');
+        });
+
+        describe('into a stream the server begins at the head of a segment', () => {
+            const cuts = [0, 5.88, 5.88 + 5.92, 5.88 + 5.92 + 5.84];
+
+            it('counts the clock from the head of the segment the stream began at', async () => {
+                const video = loadPage({ startTime: 8, cuts, duration: 20 });
+                await settle();
+
+                expect(video.getAttribute('src')).to.equal('/media?v=kJQP7kiw5Fk&t=8');
+                expect(document.getElementById('time')!.textContent).to.equal('0:05 / 0:20');
+
+                video.currentTime = 1;
+                await new Promise(resolve => setTimeout(resolve, 1100));
+                expect(eventsSent('timeUpdate').pop().time).to.equal(6);
+            });
+
+            it('seeks to the nearest head of a segment, asking for it to the fraction', async () => {
+                const video = loadPage({ duration: 20, cuts });
+                await settle();
+
+                const seek = document.getElementById('seek') as HTMLInputElement;
+                seek.value = '700';
+                seek.dispatchEvent(new window.Event('change'));
+
+                expect(video.getAttribute('src')).to.equal(`/media?v=kJQP7kiw5Fk&t=${5.88 + 5.92}`);
+                expect(document.getElementById('time')!.textContent).to.equal('0:11 / 0:20');
+            });
+
+            it('never lands back where it stood when stepping forward', async () => {
+                // Halfway between two heads the nearer one is a tie, and the one
+                // playback already stands on would undo the step.
+                const video = loadPage({ startTime: 10, duration: 30, cuts: [0, 10, 20] });
+                await settle();
+
+                const seek = document.getElementById('seek') as HTMLInputElement;
+                seek.value = '500';
+                seek.dispatchEvent(new window.Event('change'));
+
+                expect(video.getAttribute('src')).to.equal('/media?v=kJQP7kiw5Fk&t=20');
+            });
         });
 
         it('keeps playing after a seek if it was playing before', async () => {

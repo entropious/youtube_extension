@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { parsePlaylist, renderPlaylist, segmentAt } from '../src/ytproxy';
+import { parsePlaylist, renderPlaylist, segmentAt, segmentStarts } from '../src/ytproxy';
 
 const playlistText = [
     '#EXTM3U',
@@ -54,8 +54,26 @@ describe('Trimming an HLS playlist', () => {
             expect(segmentAt(playlist, 7)).to.deep.equal({ index: 2, startsAt: 7 });
         });
 
-        it('stops at the last segment when asked past the end', () => {
-            expect(segmentAt(playlist, 9999).index).to.equal(2);
+        it('stops at the last segment when asked past the end, from its own head', () => {
+            expect(segmentAt(playlist, 9999)).to.deep.equal({ index: 2, startsAt: 7 });
+        });
+    });
+
+    describe('segmentStarts', () => {
+        it('lists where every segment begins', () => {
+            expect(segmentStarts(parsePlaylist(playlistText))).to.deep.equal([0, 3, 7]);
+        });
+
+        it('agrees with segmentAt to the last bit, so the player and the server pick one segment', () => {
+            // Durations whose sums are not exact in binary, as YouTube's are.
+            const durations = [5.88, 5.92, 5.84, 5.8, 5.76, 4.6, 5.88, 5.92, 5.84, 5.8];
+            const playlist = { header: [], segments: durations.map((duration, i) => ({ url: `s${i}`, duration })) };
+            const starts = segmentStarts(playlist);
+
+            for (let second = 0; second < 58; second++) {
+                const player = starts.filter(start => start <= second).pop();
+                expect(player).to.equal(segmentAt(playlist, second).startsAt);
+            }
         });
     });
 
