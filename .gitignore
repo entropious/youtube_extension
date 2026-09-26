@@ -10,5 +10,6 @@ test/*.js.map
 .probe/*
 !.probe/devhost.sh
 !.probe/devhost-check.js
+!.probe/avsync.js
 .playwright-mcp
 .claude

@@ -22,6 +22,7 @@
 #   bash .probe/devhost.sh recover          оборвать поток и проверить восстановление
 #   bash .probe/devhost.sh tap              настоящий клик в центр кадра
 #   bash .probe/devhost.sh errorfix         вид отказа YouTube с кнопкой копирования
+#   bash .probe/devhost.sh avsync [id|auto] [мин] [высота] [plain|fix]  рассинхрон звука
 #   bash .probe/devhost.sh smoke <videoId>  весь сценарий: загрузка → play → seek
 #   bash .probe/devhost.sh verify           синтаксис webview + сборка + тесты
 #   bash .probe/devhost.sh package          проверка и сборка .vsix
@@ -31,7 +32,13 @@
 #
 # Окно запускается ровно один раз и само себя не перезапускает: пересборка
 # подхватывается только явным restart.
+#
+# -b первым аргументом (bash .probe/devhost.sh -b restart) — в фоне: окно
+# поднимается через open -g и не выходит поверх остальных. Видео load открывает
+# всегда через панель по CDP, так что фокус оно не забирает и без -b.
 set -u
+if [ "${1:-}" = "-b" ]; then export DEVHOST_BG=1; shift; fi
+BG="${DEVHOST_BG:-0}"
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 CODE="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
@@ -50,27 +57,41 @@ case "${1:-}" in
 start)
 	npm run compile 2>&1 | grep -E "error TS" && { echo "сборка упала"; exit 1; }
 	if cdp_up; then echo "окно уже запущено (CDP на $CDP_PORT)"; exit 0; fi
-	"$CODE" "${ARGS[@]}" --remote-debugging-port="$CDP_PORT" \
-		--extensionDevelopmentPath="$ROOT" --new-window "$ROOT" > "$ROOT/.probe/devhost.log" 2>&1 &
+	if [ "$BG" = 1 ]; then
+		# Отдельный экземпляр приложения, запущенный без активации. Запущенный
+		# изнутри VS Code, скрипт наследует ELECTRON_RUN_AS_NODE, и с ним
+		# приложение стартовало бы как голый Node.
+		env -u ELECTRON_RUN_AS_NODE open -g -n -a "Visual Studio Code" --stdout "$ROOT/.probe/devhost.log" --stderr "$ROOT/.probe/devhost.log" \
+			--args "${ARGS[@]}" --remote-debugging-port="$CDP_PORT" \
+			--extensionDevelopmentPath="$ROOT" --new-window "$ROOT"
+	else
+		"$CODE" "${ARGS[@]}" --remote-debugging-port="$CDP_PORT" \
+			--extensionDevelopmentPath="$ROOT" --new-window "$ROOT" > "$ROOT/.probe/devhost.log" 2>&1 &
+	fi
 	for _ in $(seq 1 30); do sleep 2; cdp_up && { echo "окно готово, CDP на $CDP_PORT"; exit 0; }; done
 	echo "окно не поднялось за 60с, см. .probe/devhost.log"; exit 1
 	;;
 
 load)
 	ID="${2:?нужен videoId}"
-	"$CODE" "${ARGS[@]}" --open-url \
-		"vscode://entro.youtube-panel/load?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D$ID" > /dev/null 2>&1
+	# Панель поднимается не сразу после старта окна.
+	for _ in $(seq 1 20); do "${CHECK[@]}" open "$ID" 2>/dev/null | rg -q sent && break; sleep 2; done
 	# Панель поднимает страницу плеера и ждёт ответа yt-dlp.
 	for _ in $(seq 1 20); do sleep 2; "${CHECK[@]}" targets 2>/dev/null | grep -q "127.0.0.1" && break; done
 	"${CHECK[@]}" ready
 	;;
 
-state|ready|play|pause|targets|messages|webview|space|click|chapters|setup|claude|timing|seektiming|recover|tap|errorfix|players|panel|totab|streams)
+state|ready|play|pause|targets|messages|webview|space|click|chapters|setup|claude|timing|seektiming|recover|tap|errorfix|players|panel|totab|streams|open)
 	"${CHECK[@]}" "$@"
 	;;
 
 seek)
 	"${CHECK[@]}" seek "${2:?нужны секунды}"
+	;;
+
+avsync)
+	npm run compile 2>&1 | rg "error TS" && { echo "сборка упала"; exit 1; }
+	shift; node "$ROOT/.probe/avsync.js" "$@"
 	;;
 
 smoke)
