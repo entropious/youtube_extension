@@ -79,7 +79,7 @@ describe('YouTubeViewProvider Synchronization', () => {
         expect(provider._lastTime).to.equal(123);
     });
 
-    it('should synchronize time to sidebar when it becomes visible', async () => {
+    it('should synchronize time to sidebar when it becomes visible while the tab is out of sight', async () => {
         const videoUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
         const panelWebview = createMockWebview();
         const panel = createMockWebviewPanel(panelWebview);
@@ -99,7 +99,9 @@ describe('YouTubeViewProvider Synchronization', () => {
         const messageHandler = panelWebview.onDidReceiveMessage.getCall(0).args[0];
         await messageHandler({ type: 'timeUpdate', time: 200, url: videoUrl });
 
-        // 4. Make sidebar visible
+        // 4. The tab goes out of sight with the panel closed, so it plays on;
+        //    then the panel opens and takes the video over.
+        panel.visible = false;
         (sidebar as any).visible = true;
         visibilityHandler();
 

@@ -1140,24 +1140,34 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		this._setupWebviewHandlers(webviewView.webview, false);
 
 		webviewView.onDidChangeVisibility(() => {
-			if (webviewView.visible) this._isTabActive = false;
+			// A video playing in a tab on screen belongs to the tab: the panel
+			// opening or closing beside it neither takes it nor touches it.
+			if (this._isTabActive && this._tabPanel?.visible) return;
+
 			const url = this._lastUrl;
 			const time = this._lastTime;
-			if (!url) return;
 
 			if (webviewView.visible) {
+				const fromTab = this._isTabActive;
+				this._isTabActive = false;
+				if (!url) return;
 				// The same video is still loaded here, so it only has to carry on:
 				// reloading it would fetch the stream again and jump back to the
-				// timestamp saved when the panel was collapsed.
-				if (this._sidebarUrl === url) this.autoResume('hidden');
+				// timestamp saved when the panel was collapsed. One that played on in
+				// a tab out of sight has moved past that, and comes over from there.
+				if (!fromTab && this._sidebarUrl === url) this.autoResume('hidden');
 				else this.loadUrl(url, time, 'sidebar');
 				return;
 			}
 
+			// The tab plays on out of sight, and the panel had nothing playing.
+			if (this._isTabActive || !url) return;
+
 			void this._saveTimestamp(url, time);
 			// A collapsed panel keeps its page alive, and would otherwise go on
-			// playing out of sight.
-			this.autoPause('hidden');
+			// playing out of sight. Only its own page is paused: a pause for this
+			// reason sent to the tab as well would outlast the panel.
+			webviewView.webview.postMessage({ type: 'autoPause', reason: 'hidden' });
 			if (this._tabPanel) this.loadUrl(url, time, 'tab');
 		});
 
