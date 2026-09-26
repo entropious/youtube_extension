@@ -16,6 +16,16 @@ function applyToolConfig(): void {
 	});
 }
 
+/**
+ * A second of the video from a query parameter. Fractions matter: a stream is
+ * asked for at the head of an HLS segment, and rounding down would land it in
+ * the segment before.
+ */
+function seconds(value: string | null): number {
+	const parsed = parseFloat(value ?? '');
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 async function startProxyServer(): Promise<void> {
 	if (proxyServer && proxyPort) {
 		return;
@@ -78,18 +88,18 @@ async function startProxyServer(): Promise<void> {
 			if (take) {
 				// `t` is the second the viewer is on, which is what the stream has to
 				// replay from — its live end is far ahead of that by now.
-				const at = parseInt(url.searchParams.get('t') ?? '0', 10);
+				const at = seconds(url.searchParams.get('t'));
 				if (!takeOverStream(res, take, at)) { res.writeHead(409); res.end('Stream is gone'); }
 				return;
 			}
 
-			void handleMedia(res, videoId, parseInt(url.searchParams.get('t') ?? '0', 10));
+			void handleMedia(res, videoId, seconds(url.searchParams.get('t')));
 			return;
 		}
 
 		const take = url.searchParams.get('take');
 		handlePlayerPage(res, videoId, startTime, autoplay, take
-			? { id: take, startAt: parseInt(url.searchParams.get('takeAt') ?? '0', 10) }
+			? { id: take, startAt: seconds(url.searchParams.get('takeAt')) }
 			: null);
 	});
 

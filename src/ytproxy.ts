@@ -360,10 +360,13 @@ export async function resolveStream(videoId: string): Promise<StreamInfo> {
 
 type WarmStream = {
 	videoId: string;
+	/** The second that was asked for, which a request must match to take it. */
 	startAt: number;
 	/** Resolves once ffmpeg is running; the request may arrive before that. */
 	ready: Promise<ReturnType<typeof runTool>>;
 	proc?: ReturnType<typeof runTool>;
+	/** The second the pipe's first frame stands at, known once ffmpeg runs. */
+	origin?: number;
 	buffered: Buffer[];
 	size: number;
 	startedAt: number;
@@ -685,6 +688,7 @@ export function prewarmStream(videoId: string, startAt = 0): void {
 			const trimmed = await trimmedInputs(videoId, stream, startAt);
 			const proc = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt, trimmed ?? undefined), true);
 			warm.proc = proc;
+			warm.origin = trimmed ? trimmed.startsAt : startAt;
 
 			proc.stdout.on('data', (chunk: Buffer) => {
 				warm.buffered.push(chunk);
@@ -803,12 +807,15 @@ export function renderPlaylist(playlist: Playlist, fromIndex: number): string {
 /** Index of the segment covering `seconds`, and where that segment begins. */
 export function segmentAt(playlist: Playlist, seconds: number): { index: number; startsAt: number } {
 	let startsAt = 0;
+	let last = { index: 0, startsAt: 0 };
 	for (let i = 0; i < playlist.segments.length; i++) {
 		const end = startsAt + playlist.segments[i].duration;
 		if (end > seconds) return { index: i, startsAt };
+		last = { index: i, startsAt };
 		startsAt = end;
 	}
-	return { index: Math.max(0, playlist.segments.length - 1), startsAt };
+	// Past the end: the last segment, from its own head.
+	return last;
 }
 
 /**
@@ -908,9 +915,11 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 
 	const warm = await takeWarmStream(videoId, startAt);
 	let ff: ReturnType<typeof runTool>;
+	let origin = startAt;
 
 	if (warm?.proc) {
 		ff = warm.proc;
+		origin = warm.origin ?? startAt;
 	} else {
 		let stream: StreamInfo;
 		try {
@@ -923,6 +932,7 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 
 		const trimmed = await trimmedInputs(videoId, stream, startAt);
 		ff = runTool(tools.ffmpegPath, ffmpegArgs(stream, startAt, trimmed ?? undefined), true);
+		if (trimmed) origin = trimmed.startsAt;
 	}
 
 	res.writeHead(200, {
@@ -935,7 +945,7 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 		id: `s${++nextStreamId}`,
 		videoId,
 		proc: ff,
-		startAt,
+		startAt: origin,
 		head: Buffer.alloc(0),
 		headDone: false,
 		// A sane default until moov names the real one, so a fragment read before
@@ -983,8 +993,37 @@ export async function handleMedia(res: http.ServerResponse, videoId: string, sta
 	attachReader(stream, res);
 }
 
-/** Playlists served from here, already cut to where playback begins. */
-export type TrimmedInputs = { urls: string[]; offset: number };
+/** Playlists served from here, cut at the head of the segment playback falls in. */
+export type TrimmedInputs = { urls: string[]; startsAt: number };
+
+/** The playlists a stream can be cut from, or null when it has to go uncut. */
+async function cuttablePlaylists(videoId: string, stream: StreamInfo): Promise<Playlist[] | null> {
+	if (!serverPort) return null;
+
+	let playlists: Playlist[] | null;
+	try {
+		playlists = await ensurePlaylists(videoId, stream);
+	} catch {
+		// Falling back to YouTube's playlist is slower, but it still plays.
+		return null;
+	}
+	return playlists && playlists.length === stream.parts.length ? playlists : null;
+}
+
+/**
+ * Where each segment begins, which is where a stream cut from these playlists
+ * can begin. Summed exactly as `segmentAt` sums them, so a player picking a
+ * segment from this list lands on the one the stream was cut at.
+ */
+export function segmentStarts(playlist: Playlist): number[] {
+	const starts: number[] = [];
+	let startsAt = 0;
+	for (const segment of playlist.segments) {
+		starts.push(startsAt);
+		startsAt = startsAt + segment.duration;
+	}
+	return starts;
+}
 
 /**
  * Points ffmpeg at trimmed playlists instead of YouTube's own.
@@ -995,41 +1034,38 @@ export type TrimmedInputs = { urls: string[]; offset: number };
  * Starting the playlist at the seek point removes both.
  */
 async function trimmedInputs(videoId: string, stream: StreamInfo, startAt: number): Promise<TrimmedInputs | null> {
-	if (!serverPort) return null;
+	const playlists = await cuttablePlaylists(videoId, stream);
+	if (!playlists) return null;
 
-	let playlists: Playlist[] | null;
-	try {
-		playlists = await ensurePlaylists(videoId, stream);
-	} catch {
-		// Falling back to YouTube's playlist is slower, but it still plays.
-		return null;
-	}
-	if (!playlists || playlists.length !== stream.parts.length) return null;
-
-	// Every part is cut at the same moment, so the tracks stay aligned.
+	// Every part is cut at the same segment: YouTube splits the video and the
+	// audio of a pair at the same moments.
 	const cut = segmentAt(playlists[0], startAt);
 	const urls = playlists.map((_, index) =>
 		`http://127.0.0.1:${serverPort}/playlist?v=${encodeURIComponent(videoId)}&i=${index}&from=${cut.index}`);
 
-	return { urls, offset: Math.max(0, startAt - cut.startsAt) };
+	return { urls, startsAt: cut.startsAt };
 }
 
 /**
  * The ffmpeg command that turns a resolved stream into what the webview plays:
  * H.264 copied through, audio re-encoded to MP3, wrapped in fragmented MP4.
  *
- * Both inputs of a video+audio pair are opened at the same offset, which is
- * what keeps them in sync when playback starts anywhere but the beginning.
+ * A trimmed stream starts at the head of its first segment, never inside it.
+ * Copied video can only begin at a keyframe — the segment's first frame — while
+ * re-encoded audio begins exactly where `-ss` says, and fragmented MP4 has no
+ * edit list to reconcile the two: the picture would trail the sound by however
+ * far into the segment the seek landed. The player moves from the head of the
+ * segment to the second it wants.
+ *
+ * An uncut stream still relies on `-ss`, given to every input so a pair at
+ * least skips the same distance.
  */
 export function ffmpegArgs(stream: StreamInfo, startAt = 0, trimmed?: TrimmedInputs): string[] {
 	const args = ['-loglevel', 'error'];
 
 	stream.parts.forEach((part, index) => {
 		args.push(...headerArgs(part.headers));
-		// With a trimmed playlist the input already begins near the seek point,
-		// so only the remainder inside its first segment is left to skip.
-		const offset = trimmed ? trimmed.offset : startAt;
-		if (offset > 0) args.push('-ss', String(offset));
+		if (!trimmed && startAt > 0) args.push('-ss', String(startAt));
 		args.push('-i', trimmed ? trimmed.urls[index] : part.url);
 	});
 
@@ -1111,8 +1147,15 @@ export async function handleInfo(res: http.ServerResponse, videoId: string): Pro
 
 	try {
 		const info = await resolveStream(videoId);
+		// Where a stream of this video can begin: the player counts its clock
+		// from there. The same playlists are what the stream waits on anyway.
+		const playlists = await cuttablePlaylists(videoId, info);
 		res.writeHead(200);
-		res.end(JSON.stringify({ duration: info.duration, title: info.title }));
+		res.end(JSON.stringify({
+			duration: info.duration,
+			title: info.title,
+			cuts: playlists ? segmentStarts(playlists[0]) : undefined
+		}));
 	} catch (e) {
 		const missing = e instanceof ToolMissingError;
 		const raw = e instanceof Error ? e.message : String(e);
@@ -1380,8 +1423,12 @@ function playerPageHtml(
 	var videoId = ${JSON.stringify(videoId)};
 	var duration = 0;
 	// The stream always starts at zero, so the position inside the video is the
-	// offset the encode was restarted at plus the element's own time.
+	// second the stream begins at plus the element's own time.
 	var offset = 0;
+	// Where the segments of this video begin, from /info. A stream begins at the
+	// head of the segment holding the second it was asked for; without this list
+	// it begins at that second itself.
+	var cuts = null;
 	var seeking = false;
 	var lastState = -1;
 	// Nothing is reported outward while no stream is attached: a failed lookup
@@ -1506,7 +1553,7 @@ function playerPageHtml(
 
 	function mediaUrl(id, at, take) {
 		return '/media?v=' + encodeURIComponent(id) +
-			(at > 0 ? '&t=' + Math.floor(at) : '') +
+			(at > 0 ? '&t=' + at : '') +
 			(take ? '&take=' + encodeURIComponent(take) : '');
 	}
 
@@ -1518,6 +1565,41 @@ function playerPageHtml(
 	}
 
 	/**
+	 * The second a stream of our own, asked for at a given second, actually begins.
+	 *
+	 * The server cuts it at the head of the segment holding that second; the same
+	 * segment is found here from the list /info sent. The element cannot move
+	 * inside the stream afterwards — it is served without byte ranges, and such a
+	 * stream is only seekable to its start — so playback begins right there.
+	 */
+	function streamStart(at) {
+		if (!cuts || !cuts.length) return at;
+		var start = 0;
+		for (var i = 0; i < cuts.length && cuts[i] <= at; i++) start = cuts[i];
+		return start;
+	}
+
+	/**
+	 * The head of a segment to seek to, since that is the only place a stream
+	 * can begin: the one nearest the target, unless it lies on the wrong side of
+	 * where playback stands — a step forward must not land back where it began.
+	 */
+	function seekPoint(at, from) {
+		if (!cuts || !cuts.length) return at;
+		var i, best = cuts[0];
+		for (i = 1; i < cuts.length; i++) {
+			if (Math.abs(cuts[i] - at) < Math.abs(best - at)) best = cuts[i];
+		}
+		if (at > from && best <= from) {
+			for (i = 0; i < cuts.length; i++) if (cuts[i] > from) return cuts[i];
+		}
+		if (at < from && best >= from) {
+			for (i = cuts.length - 1; i >= 0; i--) if (cuts[i] < from) return cuts[i];
+		}
+		return best;
+	}
+
+	/**
 	 * Starts playback at a second of the video, or picks up a running stream.
 	 *
 	 * A taken-over stream begins where the other view had reached, so its own
@@ -1525,12 +1607,13 @@ function playerPageHtml(
 	 * where a start of our own begins if that stream turns out to be gone.
 	 */
 	function startStream(at, autoplay, take, takeOffset) {
-		offset = Math.max(0, (take ? takeOffset : at) || 0);
+		at = Math.max(0, at || 0);
+		offset = take ? Math.max(0, takeOffset || 0) : streamStart(at);
 		playing = true;
 		wasPlaying = Boolean(autoplay);
 		takenOver = take || '';
 		// Kept for the stream that was gone by the time it was asked for.
-		pendingAt = Math.max(0, at || 0);
+		pendingAt = at;
 		// Whatever went wrong before is being retried right now; the old notice
 		// must not sit over a picture that plays again.
 		showMessage('');
@@ -1613,6 +1696,7 @@ function playerPageHtml(
 	function load(id, startAt, autoplay, take, takeOffset) {
 		videoId = id;
 		duration = 0;
+		cuts = null;
 		lastState = -1;
 		// Resolving takes a couple of seconds; the previous video must not keep
 		// playing meanwhile.
@@ -1630,6 +1714,10 @@ function playerPageHtml(
 		loadInfo(id).then(function(info) {
 			if (videoId !== id) return;
 			duration = info.duration || 0;
+			cuts = info.cuts || null;
+			// The stream was asked for before the segments were known, and the
+			// server began it at the head of one all the same.
+			if (playing && !takenOver) offset = streamStart(pendingAt);
 			paint();
 			send({ type: 'playerReady', videoId: id });
 		}).catch(function(err) {
@@ -1644,7 +1732,7 @@ function playerPageHtml(
 	function seekTo(target) {
 		if (!duration) return;
 		var at = Math.min(Math.max(0, target), Math.max(0, duration - 1));
-		startStream(at, !video.paused);
+		startStream(seekPoint(at, position()), !video.paused);
 	}
 
 	function togglePlay() {
