@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.11
+
+- Sound and picture stay together after a seek, a resume or a recovery. The
+  picture used to trail the sound by however far into a stream segment playback
+  started — up to six seconds. A stream now begins at the head of its segment,
+  so a seek lands on the nearest segment start in the direction you moved and a
+  resume starts a moment before where you stopped.
+- Moving a paused video between the panel and a tab no longer sets it back a
+  few seconds each time.
+- A `vscode://` link opens its video in the editor tab when that is where you
+  are watching, and leaves a closed panel closed.
+- Switching away from the tab moves the video into the panel only when the
+  panel is open; otherwise it keeps playing in the tab.
+- Opening and closing the panel beside a video playing in a tab no longer makes
+  the tab stutter, and the panel no longer starts playing a video of its own.
+- README: the view lives in the bottom panel, the shortcuts, commands and
+  in-player keys are listed as they are.
+
 ## 0.4.9
 
 - Moving a video between the sidebar and an editor tab now carries the stream
