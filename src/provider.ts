@@ -293,6 +293,22 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 		await savePromise;
 	}
 
+	/**
+	 * Loads a video opened from outside the editor, by a `vscode://` link.
+	 *
+	 * It goes where videos are being watched. With the editor tab in use, the tab
+	 * is brought forward and the panel view left as it is — opening the view would
+	 * make it the current one and pull the video out of the tab.
+	 */
+	public async loadFromLink(url: string, startTime: number): Promise<void> {
+		if (this._isTabActive && this._tabPanel) {
+			this._tabPanel.reveal(this._tabPanel.viewColumn);
+		} else {
+			await vscode.commands.executeCommand('youtube-panel.view.focus');
+		}
+		await this.loadUrl(await this.resolveUrl(url), startTime);
+	}
+
 	public _formatYoutubeUrl(url: string, startTime = 0, autoplay = true): string {
 		return formatYoutubeUrl(url, startTime, autoplay, this._getProxyPort());
 	}
@@ -1106,13 +1122,13 @@ export class YouTubeViewProvider implements vscode.WebviewViewProvider {
 					this._isTabActive = true;
 					this.loadUrl(url, time, 'tab');
 				}
-			} else {
-				// Tab became hidden - sync FROM tab TO sidebar
-				if (this._sidebarHasInteracted && this._isTabActive) {
-					this._isTabActive = false;
-					void this._saveTimestamp(url, time);
-					this.loadUrl(url, time, 'sidebar');
-				}
+			} else if (this._isTabActive && this._sidebarView?.visible) {
+				// The tab went out of sight while the panel view is on screen: the
+				// video carries on there. With the panel closed it stays in the tab,
+				// whose page is kept alive and plays on out of sight.
+				this._isTabActive = false;
+				void this._saveTimestamp(url, time);
+				this.loadUrl(url, time, 'sidebar');
 			}
 		});
 	}

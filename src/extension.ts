@@ -152,17 +152,10 @@ class YouTubeUriHandler implements vscode.UriHandler {
 				}
 
 				const startTime = parseInt(query.get('startTime') || query.get('t') || '0', 10);
-				
-				// Reveal the sidebar view
-				await vscode.commands.executeCommand('youtube-panel.view.focus');
-				
+
 				const provider = this.getProvider();
-				if (provider) {
-					const resolvedUrl = await provider.resolveUrl(url);
-					provider.loadUrl(resolvedUrl, startTime);
-				} else {
-					throw new Error('YouTubeViewProvider not initialized');
-				}
+				if (!provider) throw new Error('YouTubeViewProvider not initialized');
+				await provider.loadFromLink(url, startTime);
 			} else {
 				vscode.window.showErrorMessage(`YouTube Panel: Unknown URI path "${uri.path}"`);
 			}

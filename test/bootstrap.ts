@@ -12,7 +12,8 @@ const vscodeMock: any = {
         showInputBox: sinon.stub()
     },
     commands: {
-        registerCommand: sinon.stub()
+        registerCommand: sinon.stub(),
+        executeCommand: sinon.stub()
     },
     Uri: {
         file: (p: string) => ({ fsPath: p, scheme: 'file', toString: () => `file://${p}` }),
