@@ -84,7 +84,7 @@ load)
 	"${CHECK[@]}" ready
 	;;
 
-state|ready|play|pause|targets|messages|webview|space|click|chapters|setup|claude|timing|seektiming|recover|tap|errorfix|players|panel|totab|streams|open|keys|layout|playin)
+state|ready|play|pause|targets|messages|webview|space|click|chapters|setup|claude|timing|seektiming|recover|tap|errorfix|players|panel|totab|streams|open|keys|layout|playin|togglepanel)
 	"${CHECK[@]}" "$@"
 	;;
 
