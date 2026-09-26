@@ -216,6 +216,16 @@ const commands = {
 		console.log(JSON.stringify(await inPanel(expression), null, 1));
 	},
 
+	// Открыть видео так же, как поле поиска в панели: сообщением расширению.
+	// В отличие от --open-url, окно при этом не выходит на передний план.
+	async open(videoId) {
+		if (!videoId) throw new Error('нужен videoId');
+		const url = `https://www.youtube.com/watch?v=${videoId}`;
+		console.log(JSON.stringify(await inPanel(
+			`win.eval(${JSON.stringify(`vscode.postMessage({ type: 'requestLoad', value: ${JSON.stringify(url)} }); 'sent'`)})`
+		)));
+	},
+
 	// Перенос играющего видео в отдельную вкладку — кнопка в панели.
 	async totab() {
 		console.log(JSON.stringify(await inPanel(`(() => {
