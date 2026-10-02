@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.12
+
+- The YouTube view starts collapsed in a window that has no layout of its own
+  yet, instead of opening up in every new window — which got in the way once
+  the view was moved into a sidebar beside other views. A window where it was
+  expanded before keeps it that way.
+
 ## 0.4.11
 
 - Sound and picture stay together after a seek, a resume or a recovery. The
