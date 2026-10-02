@@ -2,7 +2,7 @@
   "name": "youtube-panel",
   "displayName": "YouTube Panel",
   "description": "The ultimate YouTube player for VS Code: watch videos in a sidebar or an editor tab, with built-in search, channel navigation, playlists, video chapters, related-video autoplay, history, favorites, smart resume, music playback, global media controls and Claude Code sync.",
-  "version": "0.4.11",
+  "version": "0.4.12",
   "publisher": "entro",
   "license": "MIT",
   "engines": {
@@ -81,7 +81,7 @@
           "id": "youtube-panel.view",
           "name": "YouTube Video",
           "icon": "media/icon.png",
-          "visibility": "visible"
+          "visibility": "collapsed"
         }
       ]
     },
