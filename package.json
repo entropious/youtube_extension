@@ -62,6 +62,16 @@
             1080
           ],
           "description": "Maximum video height, in pixels."
+        },
+        "youtube-panel.cookiesFromBrowser": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Play videos as the YouTube account you are signed in to in this browser, so YouTube sees a signed-in user rather than an anonymous one. One of `firefox`, `chrome`, `chromium`, `edge`, `brave`, `opera`, `vivaldi`, `whale` or `safari`, optionally with a profile, e.g. `chrome:Profile 1` or `firefox:default-release`. Passed to yt-dlp as `--cookies-from-browser`. Leave empty to stay anonymous. Takes precedence over `#youtube-panel.cookiesFile#`."
+        },
+        "youtube-panel.cookiesFile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to a Netscape-format `cookies.txt` exported from a browser signed in to YouTube. Passed to yt-dlp as `--cookies`; yt-dlp keeps it up to date as YouTube rotates the cookies. Used only when `#youtube-panel.cookiesFromBrowser#` is empty."
         }
       }
     },

@@ -31,16 +31,32 @@ Watch YouTube videos inside VS Code — in the bottom panel or in a full editor 
 
 Playback goes through [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ffmpeg](https://ffmpeg.org), so both have to be installed and reachable:
 
-| | |
-| --- | --- |
-| macOS | `brew install yt-dlp ffmpeg` |
-| Windows | `winget install yt-dlp.yt-dlp Gyan.FFmpeg` |
-| Debian, Ubuntu | `sudo apt install yt-dlp ffmpeg` |
-| Arch | `sudo pacman -S yt-dlp ffmpeg` |
+|                |                                            |
+| -------------- | ------------------------------------------ |
+| macOS          | `brew install yt-dlp ffmpeg`               |
+| Windows        | `winget install yt-dlp.yt-dlp Gyan.FFmpeg` |
+| Debian, Ubuntu | `sudo apt install yt-dlp ffmpeg`           |
+| Arch           | `sudo pacman -S yt-dlp ffmpeg`             |
 
 Until both are found, the panel shows nothing but these commands for your own system, ready to copy, with a button to check again. If the tools live somewhere unusual, point `youtube-panel.ytDlpPath` and `youtube-panel.ffmpegPath` at them instead.
 
 YouTube tightens its bot checks from time to time and can refuse a video to an anonymous session. The player then shows the command that updates yt-dlp the way it was installed, with a copy button. A newer yt-dlp often gets past the check, though not every time — YouTube also lifts and reimposes it on its own.
+
+### Signing in
+
+By default videos are resolved anonymously. To have YouTube see a signed-in user instead, point the extension at a browser where you are signed in to YouTube:
+
+```json
+"youtube-panel.cookiesFromBrowser": "firefox"
+```
+
+Any browser yt-dlp supports works — `firefox`, `chrome`, `chromium`, `edge`, `brave`, `opera`, `vivaldi`, `whale`, `safari` — with an optional profile, e.g. `chrome:Profile 1`. yt-dlp reads the browser's cookies each time a video is resolved; nothing is copied or stored by the extension. Alternatively, set `youtube-panel.cookiesFile` to a Netscape-format `cookies.txt` you exported yourself.
+
+A few things worth knowing:
+
+- **Firefox is the most reliable source.** Chrome and other Chromium browsers on Windows encrypt their cookies in a way yt-dlp often cannot read; use Firefox or a cookies file there.
+- **Use an account you would not mind losing.** YouTube can rate-limit or flag accounts that fetch videos through tools like yt-dlp. A secondary account is the safe choice.
+- **The sign-in follows the browser.** Signing out there signs the extension out too; if YouTube starts refusing videos again, sign in to YouTube in the browser again.
 
 ## 🚀 Getting Started
 
@@ -56,26 +72,26 @@ YouTube tightens its bot checks from time to time and can refuse a video to an a
 
 ### In the player
 
-| Key | Action |
-| --- | --- |
-| `space`, `k` | Play / pause |
-| `←`, `→` | Back / forward 5 s |
-| `j`, `l` | Back / forward 10 s |
-| `m` | Mute |
-| `f` | Fullscreen |
+| Key          | Action              |
+| ------------ | ------------------- |
+| `space`, `k` | Play / pause        |
+| `←`, `→`     | Back / forward 5 s  |
+| `j`, `l`     | Back / forward 10 s |
+| `m`          | Mute                |
+| `f`          | Fullscreen          |
 
 Clicking the picture toggles playback too. A seek lands on the start of the nearest stream segment in the direction you moved — every few seconds, depending on the video — since that is where a stream can begin with sound and picture in step.
 
 ## ⌨️ Commands
 
-| Command | Description | Shortcut |
-| --- | --- | --- |
-| `YouTube: Load URL` | Search for videos or play a specific URL. | - |
-| `YouTube: Play/Pause` | Toggle playback of the active player. | `cmd+alt+p` |
-| `YouTube: Next Video` | Skip to the next video in the playlist, or a related one. | `cmd+alt+o` |
-| `YouTube: Prev Video` | Go back to the previous video in your playlist. | `cmd+alt+i` |
-| `YouTube: Toggle Claude Sync` | Follow Claude Code: play while it works, pause when it waits. | - |
-| `YouTube Panel: Clear All` | Forget history, favorites, saved positions and the current playlist. | - |
+| Command                       | Description                                                          | Shortcut    |
+| ----------------------------- | -------------------------------------------------------------------- | ----------- |
+| `YouTube: Load URL`           | Search for videos or play a specific URL.                            | -           |
+| `YouTube: Play/Pause`         | Toggle playback of the active player.                                | `cmd+alt+p` |
+| `YouTube: Next Video`         | Skip to the next video in the playlist, or a related one.            | `cmd+alt+o` |
+| `YouTube: Prev Video`         | Go back to the previous video in your playlist.                      | `cmd+alt+i` |
+| `YouTube: Toggle Claude Sync` | Follow Claude Code: play while it works, pause when it waits.        | -           |
+| `YouTube Panel: Clear All`    | Forget history, favorites, saved positions and the current playlist. | -           |
 
 Shortcuts use `ctrl+alt` instead of `cmd+alt` on Windows and Linux, and work while the YouTube view is visible.
 
@@ -83,11 +99,13 @@ Shortcuts use `ctrl+alt` instead of `cmd+alt` on Windows and Linux, and work whi
 
 History, favorites and playback positions are kept in VS Code's own storage on this machine; nothing is sent anywhere but YouTube.
 
-| Setting | Description | Default |
-| --- | --- | --- |
-| `youtube-panel.ytDlpPath` | Path to the yt-dlp executable. | `yt-dlp` |
-| `youtube-panel.ffmpegPath` | Path to the ffmpeg executable. | `ffmpeg` |
-| `youtube-panel.maxHeight` | Maximum video height, in pixels. | `1080` |
+| Setting                            | Description                                                                 | Default  |
+| ---------------------------------- | --------------------------------------------------------------------------- | -------- |
+| `youtube-panel.ytDlpPath`          | Path to the yt-dlp executable.                                              | `yt-dlp` |
+| `youtube-panel.cookiesFromBrowser` | Browser (and profile) whose YouTube sign-in yt-dlp uses, e.g. `firefox`.    | empty    |
+| `youtube-panel.cookiesFile`        | Netscape `cookies.txt` with a YouTube sign-in, used when no browser is set. | empty    |
+| `youtube-panel.ffmpegPath`         | Path to the ffmpeg executable.                                              | `ffmpeg` |
+| `youtube-panel.maxHeight`          | Maximum video height, in pixels.                                            | `1080`   |
 
 ## 📝 License
 

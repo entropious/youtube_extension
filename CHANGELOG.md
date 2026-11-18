@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Videos can be played as a signed-in YouTube user instead of an anonymous one.
+  Set `youtube-panel.cookiesFromBrowser` to a browser where you are signed in
+  (e.g. `firefox`, or `chrome:Profile 1`), or `youtube-panel.cookiesFile` to an
+  exported `cookies.txt`, and yt-dlp resolves every video with that sign-in.
+- A bot check on an anonymous session now suggests signing in, and one on a
+  signed-in session says the sign-in may have expired. A sign-in yt-dlp cannot
+  read is reported as such, with yt-dlp's reason.
+
 ## 0.4.12
 
 - The YouTube view starts collapsed in a window that has no layout of its own
