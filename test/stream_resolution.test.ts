@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { explain, ffmpegArgs, formatSelector, parseStreamInfo, StreamInfo } from '../src/ytproxy';
+import { cookieArgs, explain, ffmpegArgs, formatSelector, isSignedIn, parseStreamInfo, setToolConfig, StreamInfo, ytDlpArgs } from '../src/ytproxy';
 
 const hlsPair = {
     duration: 282,
@@ -153,6 +153,26 @@ describe('Stream resolution', () => {
             expect(message).to.not.contain('--cookies-from-browser');
         });
 
+        it('suggests signing in when the session is anonymous', () => {
+            const message = explain('ERROR: [youtube] abc: Sign in to confirm you’re not a bot.', false);
+
+            expect(message).to.contain('cookiesFromBrowser');
+        });
+
+        it('points at an expired sign-in when the session is signed in', () => {
+            const message = explain('ERROR: [youtube] abc: Sign in to confirm you’re not a bot.', true);
+
+            expect(message).to.contain('even though yt-dlp is signed in');
+            expect(message).to.not.contain('anonymous');
+        });
+
+        it('says so when the sign-in cannot be read', () => {
+            const message = explain('ERROR: could not find firefox cookies database in /home/u/.mozilla/firefox', true);
+
+            expect(message).to.contain('could not read your YouTube sign-in');
+            expect(message).to.contain('could not find firefox cookies database');
+        });
+
         it('strips the documentation trail from availability errors', () => {
             const message = explain('Video unavailable. This video is not available.\n  See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ for more');
 
@@ -161,6 +181,38 @@ describe('Stream resolution', () => {
 
         it('passes anything else through untouched', () => {
             expect(explain('ffmpeg exited with code 1')).to.equal('ffmpeg exited with code 1');
+        });
+    });
+
+    describe('sign-in', () => {
+        afterEach(() => setToolConfig({ cookiesFromBrowser: '', cookiesFile: '' }));
+
+        it('stays anonymous with neither setting', () => {
+            expect(cookieArgs({ cookiesFromBrowser: '', cookiesFile: '' })).to.deep.equal([]);
+            expect(isSignedIn({ cookiesFromBrowser: ' ', cookiesFile: '' })).to.equal(false);
+        });
+
+        it('borrows a browser sign-in, profile included', () => {
+            expect(cookieArgs({ cookiesFromBrowser: 'chrome:Profile 1', cookiesFile: '' }))
+                .to.deep.equal(['--cookies-from-browser', 'chrome:Profile 1']);
+        });
+
+        it('reads a cookies file', () => {
+            expect(cookieArgs({ cookiesFromBrowser: '', cookiesFile: '/tmp/cookies.txt' }))
+                .to.deep.equal(['--cookies', '/tmp/cookies.txt']);
+        });
+
+        it('prefers the browser over a file, so yt-dlp never writes over the file', () => {
+            expect(cookieArgs({ cookiesFromBrowser: 'firefox', cookiesFile: '/tmp/cookies.txt' }))
+                .to.deep.equal(['--cookies-from-browser', 'firefox']);
+        });
+
+        it('hands the sign-in to every yt-dlp lookup', () => {
+            setToolConfig({ cookiesFromBrowser: 'firefox' });
+            const args = ytDlpArgs('dQw4w9WgXcQ');
+
+            expect(args[args.indexOf('--cookies-from-browser') + 1]).to.equal('firefox');
+            expect(args[args.length - 1]).to.equal('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
         });
     });
 });

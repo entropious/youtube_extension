@@ -6,13 +6,15 @@ import { checkTools, handleInfo, handleMedia, handlePlayerPage, handlePlaylist, 
 let proxyServer: http.Server | null = null;
 let proxyPort = 0;
 
-/** Picks up the yt-dlp and ffmpeg settings the media server runs with. */
+/** Picks up the yt-dlp, ffmpeg and sign-in settings the media server runs with. */
 function applyToolConfig(): void {
 	const config = vscode.workspace.getConfiguration('youtube-panel');
 	setToolConfig({
 		ytDlpPath: config.get<string>('ytDlpPath') || 'yt-dlp',
 		ffmpegPath: config.get<string>('ffmpegPath') || 'ffmpeg',
-		maxHeight: config.get<number>('maxHeight') || 1080
+		maxHeight: config.get<number>('maxHeight') || 1080,
+		cookiesFromBrowser: config.get<string>('cookiesFromBrowser') || '',
+		cookiesFile: config.get<string>('cookiesFile') || ''
 	});
 }
 
@@ -139,7 +141,7 @@ export async function deactivate() {
 let provider: YouTubeViewProvider | null = null;
 
 class YouTubeUriHandler implements vscode.UriHandler {
-	constructor(private getProvider: () => YouTubeViewProvider | null) {}
+	constructor(private getProvider: () => YouTubeViewProvider | null) { }
 
 	async handleUri(uri: vscode.Uri) {
 		try {
@@ -228,7 +230,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			provider?.nextVideo();
 		})
 	);
-	
+
 	context.subscriptions.push(
 		vscode.commands.registerCommand('youtube-panel.prevVideo', () => {
 			provider?.prevVideo();

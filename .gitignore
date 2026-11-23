@@ -13,3 +13,5 @@ test/*.js.map
 !.probe/avsync.js
 .playwright-mcp
 .claude
+
+yt-signing.md

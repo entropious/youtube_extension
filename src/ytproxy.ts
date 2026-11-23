@@ -24,12 +24,21 @@ export type ToolConfig = {
 	ffmpegPath: string;
 	/** Upper bound for the picked format's height, in pixels. */
 	maxHeight: number;
+	/**
+	 * A browser whose YouTube sign-in yt-dlp borrows, in yt-dlp's own
+	 * `BROWSER[+KEYRING][:PROFILE][::CONTAINER]` form. Empty for none.
+	 */
+	cookiesFromBrowser: string;
+	/** A Netscape-format cookies file holding a YouTube sign-in. Empty for none. */
+	cookiesFile: string;
 };
 
 let tools: ToolConfig = {
 	ytDlpPath: 'yt-dlp',
 	ffmpegPath: 'ffmpeg',
-	maxHeight: 1080
+	maxHeight: 1080,
+	cookiesFromBrowser: '',
+	cookiesFile: ''
 };
 
 export function setToolConfig(config: Partial<ToolConfig>): void {
@@ -275,7 +284,27 @@ export function parseStreamInfo(data: any): StreamInfo {
 	};
 }
 
-function runYtDlp(videoId: string): Promise<StreamInfo> {
+/** Whether yt-dlp is resolving videos as a signed-in YouTube user. */
+export function isSignedIn(config: Pick<ToolConfig, 'cookiesFromBrowser' | 'cookiesFile'> = tools): boolean {
+	return Boolean(config.cookiesFromBrowser.trim() || config.cookiesFile.trim());
+}
+
+/**
+ * The flags that make yt-dlp act as a signed-in user. A browser wins over a
+ * file when both are set: given both, yt-dlp would read the browser and then
+ * write its cookies over the file.
+ */
+export function cookieArgs(config: Pick<ToolConfig, 'cookiesFromBrowser' | 'cookiesFile'> = tools): string[] {
+	const browser = config.cookiesFromBrowser.trim();
+	if (browser) return ['--cookies-from-browser', browser];
+
+	const file = config.cookiesFile.trim();
+	if (file) return ['--cookies', file];
+
+	return [];
+}
+
+export function ytDlpArgs(videoId: string): string[] {
 	// HLS first, and by a wide margin: its segments are read by plain GETs, so
 	// ffmpeg can both stream and seek them. The direct googlevideo links of the
 	// progressive and adaptive formats answer 403 to the open byte range ffmpeg
@@ -283,14 +312,19 @@ function runYtDlp(videoId: string): Promise<StreamInfo> {
 	// but not by ffmpeg, which is why they sit at the end as a last resort.
 	// Within HLS a combined rendition wins over a video+audio pair: one playlist
 	// resolves several times faster.
-	const args = [
+	return [
 		'--no-playlist',
 		'--no-warnings',
 		'--no-progress',
+		...cookieArgs(),
 		'-f', formatSelector(tools.maxHeight),
 		'-J',
 		`https://www.youtube.com/watch?v=${videoId}`
 	];
+}
+
+function runYtDlp(videoId: string): Promise<StreamInfo> {
+	const args = ytDlpArgs(videoId);
 
 	return new Promise((resolve, reject) => {
 		const proc = runTool(tools.ytDlpPath, args);
@@ -1095,11 +1129,22 @@ export function ffmpegArgs(stream: StreamInfo, startAt = 0, trimmed?: TrimmedInp
 }
 
 /** Turns a yt-dlp failure into something the player page can act on. */
-export function explain(message: string): string {
+export function explain(message: string, signedIn = isSignedIn()): string {
 	// YouTube refuses a share of its catalogue to anonymous sessions, and which
-	// share that is moves with its bot checks; a newer yt-dlp often gets in.
+	// share that is moves with its bot checks; a newer yt-dlp often gets in, and
+	// a signed-in session gets in more often still.
 	if (/not a bot|sign in to confirm/i.test(message)) {
-		return 'YouTube refused this video to an anonymous session. A newer yt-dlp often gets past it.';
+		return signedIn
+			? 'YouTube refused this video even though yt-dlp is signed in. A newer yt-dlp often gets past it; if not, the sign-in may have expired — sign in to YouTube in the browser again, or export a fresh cookies file.'
+			: 'YouTube refused this video to an anonymous session. A newer yt-dlp often gets past it, and signing in (the youtube-panel.cookiesFromBrowser setting) usually does.';
+	}
+
+	// The sign-in could not be read at all: the browser is not installed, its
+	// profile is elsewhere, or its cookie store is locked or encrypted in a way
+	// yt-dlp cannot open. yt-dlp's own words say which.
+	if (/cookie/i.test(message) && /could not|failed|unable|not find|no such|permission|decrypt|locked/i.test(message)) {
+		return 'yt-dlp could not read your YouTube sign-in. Check the youtube-panel.cookiesFromBrowser or youtube-panel.cookiesFile setting. '
+			+ message.replace(/\s+See\s+https:\S+.*$/s, '').trim();
 	}
 
 	if (/is not available|private video|members-only|age/i.test(message)) {
